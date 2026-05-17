@@ -1,4 +1,5 @@
-﻿param(
+﻿[CmdletBinding()]
+param(
     [Parameter(Mandatory=$true)]
     [ValidateSet("Antes","Despues")]
     [string]$Modo,
@@ -31,14 +32,26 @@
 
 $ErrorActionPreference = "Continue"
 
+$script:LogPath = $null
+
+function Write-Log {
+    param([string]$Message)
+    if ($script:LogPath) {
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        try { Add-Content -Path $script:LogPath -Value "$timestamp $Message" -ErrorAction SilentlyContinue } catch {}
+    }
+}
+
 function Write-Info {
     param([string]$Message)
     Write-Host "[INFO] $Message" -ForegroundColor Cyan
+    Write-Log "[INFO] $Message"
 }
 
 function Write-Warn2 {
     param([string]$Message)
     Write-Host "[WARN] $Message" -ForegroundColor Yellow
+    Write-Log "[WARN] $Message"
 }
 
 function Safe-Name {
@@ -93,7 +106,7 @@ function Get-DefaultWritableBase {
             Remove-Item $testFile -Force -ErrorAction SilentlyContinue
 
             return $base
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     return (Join-Path $env:TEMP "ReporteRendimiento")
@@ -124,15 +137,15 @@ function Initialize-DefaultPaths {
         if (!(Test-Path $resolvedRuta)) {
             New-Item -ItemType Directory -Path $resolvedRuta -Force | Out-Null
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         if (!(Test-Path $toolsDir)) {
             New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         BaseDir = $base
         RutaSalida = $resolvedRuta
         ToolsDir = $toolsDir
@@ -162,12 +175,12 @@ function Get-SystemInfo {
     $gpuList = @()
     $ramList = @()
 
-    try { $cs = Get-CimInstance Win32_ComputerSystem } catch {}
-    try { $os = Get-CimInstance Win32_OperatingSystem } catch {}
-    try { $bios = Get-CimInstance Win32_BIOS } catch {}
-    try { $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1 } catch {}
-    try { $gpuList = @(Get-CimInstance Win32_VideoController) } catch {}
-    try { $ramList = @(Get-CimInstance Win32_PhysicalMemory) } catch {}
+    $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+    $os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $bios = Get-CimInstance Win32_BIOS -ErrorAction SilentlyContinue
+    $cpu = Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    $gpuList = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)
+    $ramList = @(Get-CimInstance Win32_PhysicalMemory -ErrorAction SilentlyContinue)
 
     $ramTotalGB = $null
     if ($cs -ne $null) {
@@ -183,7 +196,7 @@ function Get-SystemInfo {
         $capGB = $null
         if ($m.Capacity -ne $null) { $capGB = [math]::Round($m.Capacity / 1GB, 2) }
 
-        $ramModules += New-Object PSObject -Property @{
+        $ramModules += [PSCustomObject]@{
             Banco = $m.BankLabel
             Marca = $m.Manufacturer
             Parte = $part
@@ -196,7 +209,7 @@ function Get-SystemInfo {
     foreach ($g in $gpuList) {
         $gRam = $null
         if ($g.AdapterRAM -ne $null) { $gRam = [math]::Round($g.AdapterRAM / 1GB, 2) }
-        $gpus += New-Object PSObject -Property @{
+        $gpus += [PSCustomObject]@{
             Nombre = $g.Name
             Driver = $g.DriverVersion
             RAMGB = $gRam
@@ -238,7 +251,7 @@ function Get-SystemInfo {
         $cpuMaxMHz = $cpu.MaxClockSpeed
     }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Hostname = $env:COMPUTERNAME
         Usuario = "$env:USERDOMAIN\$env:USERNAME"
         EsAdministrador = Is-Admin
@@ -263,37 +276,37 @@ function Get-SystemInfo {
 function Add-LhmTemperatureSensors {
     param($Hardware, [ref]$Results)
 
-    try { $Hardware.Update() } catch {}
+    try { $Hardware.Update() } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     foreach ($sub in $Hardware.SubHardware) {
-        try { $sub.Update() } catch {}
+        try { $sub.Update() } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     foreach ($sensor in $Hardware.Sensors) {
         try {
             if (($sensor.SensorType.ToString() -eq "Temperature") -and ($sensor.Value -ne $null)) {
-                $Results.Value += New-Object PSObject -Property @{
+                $Results.Value += [PSCustomObject]@{
                     Sensor = "$($Hardware.Name) - $($sensor.Name)"
                     Tipo = $Hardware.HardwareType.ToString()
                     TemperaturaC = [math]::Round([double]$sensor.Value, 1)
                     Fuente = "LibreHardwareMonitor_DLL"
                 }
             }
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     foreach ($sub in $Hardware.SubHardware) {
         foreach ($sensor in $sub.Sensors) {
             try {
                 if (($sensor.SensorType.ToString() -eq "Temperature") -and ($sensor.Value -ne $null)) {
-                    $Results.Value += New-Object PSObject -Property @{
+                    $Results.Value += [PSCustomObject]@{
                         Sensor = "$($sub.Name) - $($sensor.Name)"
                         Tipo = $sub.HardwareType.ToString()
                         TemperaturaC = [math]::Round([double]$sensor.Value, 1)
                         Fuente = "LibreHardwareMonitor_DLL"
                     }
                 }
-            } catch {}
+            } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
         }
     }
 }
@@ -308,7 +321,7 @@ function Get-LhmLoaderExceptionText {
                 if ($le -ne $null) { $msgs += $le.Message }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         if ($Exception.InnerException -ne $null) {
@@ -318,7 +331,7 @@ function Get-LhmLoaderExceptionText {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     if ($msgs.Count -eq 0) { return $Exception.Message }
     return ($msgs -join " | ")
@@ -332,23 +345,23 @@ function Import-LhmDependencies {
         if ([string]::IsNullOrWhiteSpace($dir)) { return }
         if (!(Test-Path $dir)) { return }
 
-        try { Get-ChildItem -Path $dir -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch {}
+        try { Get-ChildItem -Path $dir -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
         $dlls = @(Get-ChildItem -Path $dir -Filter "*.dll" -ErrorAction SilentlyContinue)
 
         # Cargar primero dependencias comunes y luego LibreHardwareMonitorLib.
         foreach ($d in $dlls) {
             if ($d.Name -ne "LibreHardwareMonitorLib.dll") {
-                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch {}
+                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
             }
         }
 
         foreach ($d in $dlls) {
             if ($d.Name -eq "LibreHardwareMonitorLib.dll") {
-                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch {}
+                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 }
 
 function Get-TemperatureFromLhm {
@@ -356,7 +369,7 @@ function Get-TemperatureFromLhm {
     $results = @()
 
     if (!(Test-Path $DllPath)) {
-        $results += New-Object PSObject -Property @{
+        $results += [PSCustomObject]@{
             Sensor = "LibreHardwareMonitor"
             Tipo = "Info"
             TemperaturaC = $null
@@ -386,9 +399,9 @@ function Get-TemperatureFromLhm {
 
         if ($computer -ne $null) { $computer.Close() }
     } catch {
-        try { if ($computer -ne $null) { $computer.Close() } } catch {}
+        try { if ($computer -ne $null) { $computer.Close() } } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
         $loaderText = Get-LhmLoaderExceptionText -Exception $_.Exception
-        $results += New-Object PSObject -Property @{
+        $results += [PSCustomObject]@{
             Sensor = "LibreHardwareMonitor"
             Tipo = "Error"
             TemperaturaC = $null
@@ -416,12 +429,12 @@ function Resolve-LhmDllPath {
             $candidates += (Join-Path $scriptDir "LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
             $candidates += (Join-Path $scriptDir "Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         $defaultBase = Get-DefaultWritableBase
         $candidates += (Join-Path $defaultBase "Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     if ($env:ProgramData) {
         $candidates += (Join-Path $env:ProgramData "ReporteRendimiento\Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
@@ -432,8 +445,8 @@ function Resolve-LhmDllPath {
         $candidates += (Join-Path $env:USERPROFILE "Desktop\ReporteRendimiento\Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
     }
 
-    $candidates += "C:\Program Files\LibreHardwareMonitor\LibreHardwareMonitorLib.dll"
-    $candidates += "C:\Program Files (x86)\LibreHardwareMonitor\LibreHardwareMonitorLib.dll"
+    $candidates += Join-Path ${env:ProgramFiles} "LibreHardwareMonitor\LibreHardwareMonitorLib.dll"
+    $candidates += Join-Path ${env:ProgramFiles(x86)} "LibreHardwareMonitor\LibreHardwareMonitorLib.dll"
     $candidates += "C:\ReporteRendimiento\Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll"
 
     foreach ($c in $candidates) {
@@ -460,7 +473,7 @@ function Install-LibreHardwareMonitor {
         $TargetDir = Join-Path $defaultBase "Tools\LibreHardwareMonitor"
     }
 
-    $result = New-Object PSObject -Property @{
+    $result = [PSCustomObject]@{
         Installed = $false
         DllPath = $null
         TargetDir = $TargetDir
@@ -475,7 +488,7 @@ function Install-LibreHardwareMonitor {
 
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
         $tmpRoot = Join-Path $env:TEMP ("LibreHardwareMonitor_" + [guid]::NewGuid().ToString())
         New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
@@ -520,7 +533,7 @@ function Install-LibreHardwareMonitor {
 
         try {
             Get-ChildItem -Path $TargetDir -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
         $targetDll = Join-Path $TargetDir "LibreHardwareMonitorLib.dll"
         if (!(Test-Path $targetDll)) {
@@ -536,7 +549,7 @@ function Install-LibreHardwareMonitor {
         Write-Info "LibreHardwareMonitor instalado en: $TargetDir"
         Write-Info "DLL detectada: $targetDll"
 
-        try { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+        try { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
         return $result
     } catch {
         $result.Error = $_.Exception.Message
@@ -561,7 +574,7 @@ function Ensure-LibreHardwareMonitor {
         try {
             $parent = Split-Path -Parent $RequestedDllPath
             if (![string]::IsNullOrWhiteSpace($parent)) { $targetDir = $parent }
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     $install = Install-LibreHardwareMonitor -TargetDir $targetDir
@@ -591,18 +604,18 @@ function Get-TemperatureFromHardwareMonitorWmi {
                 $identifier = $null
                 $parent = $null
 
-                try { $sensorType = [string]$sensor.SensorType } catch {}
-                try { $value = $sensor.Value } catch {}
-                try { $name = [string]$sensor.Name } catch {}
-                try { $identifier = [string]$sensor.Identifier } catch {}
-                try { $parent = [string]$sensor.Parent } catch {}
+                try { $sensorType = [string]$sensor.SensorType } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { $value = $sensor.Value } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { $name = [string]$sensor.Name } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { $identifier = [string]$sensor.Identifier } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { $parent = [string]$sensor.Parent } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
                 if (($sensorType -eq "Temperature") -and ($value -ne $null)) {
                     $sensorName = $name
                     if ([string]::IsNullOrWhiteSpace($sensorName)) { $sensorName = $identifier }
                     if (![string]::IsNullOrWhiteSpace($parent)) { $sensorName = $parent + " - " + $sensorName }
 
-                    $results += New-Object PSObject -Property @{
+                    $results += [PSCustomObject]@{
                         Sensor = $sensorName
                         Tipo = "HardwareMonitorWMI"
                         TemperaturaC = [math]::Round([double]$value, 1)
@@ -610,7 +623,7 @@ function Get-TemperatureFromHardwareMonitorWmi {
                     }
                 }
             }
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     return $results
@@ -625,7 +638,7 @@ function Get-TemperatureFromWmi {
             if ($t.CurrentTemperature -ne $null) {
                 $c = [math]::Round(($t.CurrentTemperature / 10) - 273.15, 1)
                 if (($c -gt -20) -and ($c -lt 130)) {
-                    $temps += New-Object PSObject -Property @{
+                    $temps += [PSCustomObject]@{
                         Sensor = $t.InstanceName
                         Tipo = "ACPI"
                         TemperaturaC = $c
@@ -634,7 +647,7 @@ function Get-TemperatureFromWmi {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     return $temps
 }
@@ -647,8 +660,8 @@ function Get-TemperatureFromNvidiaSmi {
     $cmd = Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue
     if ($cmd -ne $null) { $paths += $cmd.Source }
 
-    $paths += "C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"
-    $paths += "C:\Windows\System32\nvidia-smi.exe"
+    $paths += Join-Path ${env:ProgramFiles} "NVIDIA Corporation\NVSMI\nvidia-smi.exe"
+    $paths += "$env:SystemRoot\System32\nvidia-smi.exe"
 
     $exe = $null
     foreach ($p in $paths) {
@@ -663,7 +676,7 @@ function Get-TemperatureFromNvidiaSmi {
             if ($line -match "^(.+),\s*([0-9]+)") {
                 $name = $Matches[1].Trim()
                 $temp = [int]$Matches[2]
-                $results += New-Object PSObject -Property @{
+                $results += [PSCustomObject]@{
                     Sensor = "NVIDIA GPU - $name"
                     Tipo = "GPU"
                     TemperaturaC = $temp
@@ -671,7 +684,7 @@ function Get-TemperatureFromNvidiaSmi {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     return $results
 }
@@ -691,7 +704,7 @@ function Get-TemperatureFromThermalZoneCounters {
             }
 
             if (($temp -ne $null) -and ($temp -gt -20) -and ($temp -lt 130)) {
-                $results += New-Object PSObject -Property @{
+                $results += [PSCustomObject]@{
                     Sensor = "ThermalZone - $($z.Name)"
                     Tipo = "ThermalZone"
                     TemperaturaC = $temp
@@ -699,7 +712,7 @@ function Get-TemperatureFromThermalZoneCounters {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         $probes = @(Get-CimInstance Win32_TemperatureProbe -ErrorAction Stop)
@@ -707,7 +720,7 @@ function Get-TemperatureFromThermalZoneCounters {
             if ($p.CurrentReading -ne $null) {
                 $temp = [double]$p.CurrentReading
                 if (($temp -gt -20) -and ($temp -lt 130)) {
-                    $results += New-Object PSObject -Property @{
+                    $results += [PSCustomObject]@{
                         Sensor = "TemperatureProbe - $($p.Name)"
                         Tipo = "TemperatureProbe"
                         TemperaturaC = [math]::Round($temp, 1)
@@ -716,7 +729,7 @@ function Get-TemperatureFromThermalZoneCounters {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     return $results
 }
@@ -770,7 +783,7 @@ function Get-TemperatureInfo {
     }
 
     if ($clean.Count -eq 0) {
-        $clean += New-Object PSObject -Property @{
+        $clean += [PSCustomObject]@{
             Sensor = "No disponible"
             Tipo = "No disponible"
             TemperaturaC = $null
@@ -821,7 +834,7 @@ function Get-CurrentMetrics {
         try {
             $counter = Get-Counter '\Processor(_Total)\% Processor Time' -ErrorAction Stop
             $cpuValue = [math]::Round($counter.CounterSamples[0].CookedValue, 2)
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     try {
@@ -832,7 +845,7 @@ function Get-CurrentMetrics {
             $ramUsedPct = [math]::Round((($totalKB - $freeKB) / $totalKB) * 100, 2)
             $ramFreeGB = [math]::Round(($freeKB * 1KB) / 1GB, 2)
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         $disk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -eq "_Total" } | Select-Object -First 1
@@ -840,12 +853,12 @@ function Get-CurrentMetrics {
             $diskQueue = $disk.AvgDiskQueueLength
             $diskTime = $disk.PercentDiskTime
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     $temps = @(Get-TemperatureInfo -Advanced $AdvancedTemp -DllPath $LhmDll)
     $tempMax = Get-MaxTemperature -Temps $temps
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Fecha = Get-Date
         CPUPercent = $cpuValue
         RAMUsedPercent = $ramUsedPct
@@ -916,7 +929,7 @@ function Measure-Phase {
         $tempMax = [math]::Round(($tempVals | Measure-Object -Maximum).Maximum, 1)
     }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Fase = $Phase
         DuracionSegundos = $Seconds
         IntervaloSegundos = $Interval
@@ -999,7 +1012,7 @@ function Start-DiskStressJob {
             Remove-Item $file -Force -ErrorAction SilentlyContinue
         }
 
-        return New-Object PSObject -Property @{
+        return [PSCustomObject]@{
             WriteMB = $writeMB
             ReadMB = $readMB
             Cycles = $cycles
@@ -1024,7 +1037,7 @@ function Invoke-SeriousBenchmark {
     try {
         $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
         if ($cpu.NumberOfLogicalProcessors -ne $null) { $threads = [int]$cpu.NumberOfLogicalProcessors }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     $workers = $MaxWorkers
     if ($workers -le 0) {
@@ -1054,12 +1067,12 @@ function Invoke-SeriousBenchmark {
             foreach ($item in $r) {
                 if ($item -ne $null) { $cpuIterations += [int]$item }
             }
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
         Remove-Job $j -Force -ErrorAction SilentlyContinue
     }
 
     $diskResult = $null
-    try { $diskResult = Receive-Job $diskJob -ErrorAction SilentlyContinue } catch {}
+    try { $diskResult = Receive-Job $diskJob -ErrorAction SilentlyContinue } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     Remove-Job $diskJob -Force -ErrorAction SilentlyContinue
 
     $writeMB = 0
@@ -1081,7 +1094,7 @@ function Invoke-SeriousBenchmark {
         $readMBs = [math]::Round($readMB / $Duration, 2)
     }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Phase = $phase
         CpuWorkers = $workers
         CpuIterations = $cpuIterations
@@ -1119,7 +1132,7 @@ function Get-DiskInfo {
                 $freePct = [math]::Round(($d.FreeSpace / $d.Size) * 100, 2)
             }
 
-            $volumes += New-Object PSObject -Property @{
+            $volumes += [PSCustomObject]@{
                 Unidad = $d.DeviceID
                 Nombre = $d.VolumeName
                 Sistema = $d.FileSystem
@@ -1129,7 +1142,7 @@ function Get-DiskInfo {
                 UsadoPct = $usedPct
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         $diskDrives = @(Get-CimInstance Win32_DiskDrive)
@@ -1137,7 +1150,7 @@ function Get-DiskInfo {
             $sizeGB = $null
             if ($d.Size -ne $null) { $sizeGB = [math]::Round($d.Size / 1GB, 2) }
 
-            $physical += New-Object PSObject -Property @{
+            $physical += [PSCustomObject]@{
                 Modelo = $d.Model
                 Interface = $d.InterfaceType
                 Serial = $d.SerialNumber
@@ -1148,7 +1161,7 @@ function Get-DiskInfo {
                 PhysicalMediaType = $null
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         $physicalDisks = @(Get-PhysicalDisk)
@@ -1159,7 +1172,7 @@ function Get-DiskInfo {
             $op = $null
             if ($p.OperationalStatus -ne $null) { $op = $p.OperationalStatus -join "," }
 
-            $physical += New-Object PSObject -Property @{
+            $physical += [PSCustomObject]@{
                 Modelo = $p.FriendlyName
                 Interface = $p.BusType
                 Serial = $p.SerialNumber
@@ -1170,7 +1183,7 @@ function Get-DiskInfo {
                 PhysicalMediaType = $p.MediaType
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         $perfDisks = @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -ne "_Total" })
@@ -1180,7 +1193,7 @@ function Get-DiskInfo {
             if ($p.AvgDisksecPerRead -ne $null) { $readMs = [math]::Round($p.AvgDisksecPerRead * 1000, 2) }
             if ($p.AvgDisksecPerWrite -ne $null) { $writeMs = [math]::Round($p.AvgDisksecPerWrite * 1000, 2) }
 
-            $perf += New-Object PSObject -Property @{
+            $perf += [PSCustomObject]@{
                 Unidad = $p.Name
                 DiskReadsPerSec = $p.DiskReadsPerSec
                 DiskWritesPerSec = $p.DiskWritesPerSec
@@ -1190,9 +1203,9 @@ function Get-DiskInfo {
                 AvgDiskSecPerWrite_ms = $writeMs
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Volumes = $volumes
         PhysicalDisk = $physical
         DiskPerf = $perf
@@ -1208,11 +1221,11 @@ function Get-ProcessesInfo {
             $path = $null
             $startTime = $null
             $cpuSeconds = 0
-            try { $path = $p.Path } catch {}
-            try { $startTime = $p.StartTime } catch {}
+            try { $path = $p.Path } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+            try { $startTime = $p.StartTime } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
             if ($p.CPU -ne $null) { $cpuSeconds = [math]::Round($p.CPU, 2) }
 
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 Name = $p.ProcessName
                 Id = $p.Id
                 CPUSeconds = $cpuSeconds
@@ -1221,9 +1234,9 @@ function Get-ProcessesInfo {
                 StartTime = $startTime
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         TotalProcesos = $items.Count
         TopCPU = @($items | Sort-Object CPUSeconds -Descending | Select-Object -First 20)
         TopRAM = @($items | Sort-Object RAMMB -Descending | Select-Object -First 20)
@@ -1237,7 +1250,7 @@ function Get-SmartCtlInfo {
     $cmd = Get-Command $SmartCtlPath -ErrorAction SilentlyContinue
 
     if (($cmd -eq $null) -and (!(Test-Path $SmartCtlPath))) {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             Device = "smartctl"
             Available = $false
             Health = $null
@@ -1269,7 +1282,7 @@ function Get-SmartCtlInfo {
                     $temp = [int]$Matches.t
                 }
 
-                $items += New-Object PSObject -Property @{
+                $items += [PSCustomObject]@{
                     Device = $dev
                     Available = $true
                     Health = $health
@@ -1279,7 +1292,7 @@ function Get-SmartCtlInfo {
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             Device = "smartctl"
             Available = $false
             Health = $null
@@ -1289,7 +1302,7 @@ function Get-SmartCtlInfo {
     }
 
     if ($items.Count -eq 0) {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             Device = "smartctl"
             Available = $false
             Health = $null
@@ -1324,7 +1337,7 @@ function Get-TrimStatus {
             }
 
             if ($line -match "DisableDeleteNotify") {
-                $items += New-Object PSObject -Property @{
+                $items += [PSCustomObject]@{
                     FileSystem = $name
                     TrimEnabled = $enabled
                     Raw = $line
@@ -1332,7 +1345,7 @@ function Get-TrimStatus {
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             FileSystem = "N/D"
             TrimEnabled = $null
             Raw = $_.Exception.Message
@@ -1340,7 +1353,7 @@ function Get-TrimStatus {
     }
 
     if ($items.Count -eq 0) {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             FileSystem = "N/D"
             TrimEnabled = $null
             Raw = "No disponible"
@@ -1358,7 +1371,7 @@ function Get-StorageReliabilityInfo {
     try {
         $counters = @(Get-PhysicalDisk | Get-StorageReliabilityCounter -ErrorAction Stop)
         foreach ($c in $counters) {
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 DeviceId = $c.DeviceId
                 TemperatureC = $c.Temperature
                 TemperatureMaxC = $c.TemperatureMax
@@ -1374,7 +1387,7 @@ function Get-StorageReliabilityInfo {
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             DeviceId = "N/D"
             TemperatureC = $null
             TemperatureMaxC = $null
@@ -1402,14 +1415,14 @@ function Get-WmiSmartBasic {
     try {
         $status = @(Get-CimInstance -Namespace root\wmi -ClassName MSStorageDriver_FailurePredictStatus -ErrorAction Stop)
         foreach ($s in $status) {
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 InstanceName = $s.InstanceName
                 PredictFailure = $s.PredictFailure
                 Reason = $s.Reason
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             InstanceName = "N/D"
             PredictFailure = $null
             Reason = $null
@@ -1454,7 +1467,7 @@ function Get-DiskTemperatureFromSmartCtl {
                     $temp = [int]$Matches.t
                 }
 
-                $items += New-Object PSObject -Property @{
+                $items += [PSCustomObject]@{
                     Device = $dev
                     Health = $health
                     TemperatureC = $temp
@@ -1462,7 +1475,7 @@ function Get-DiskTemperatureFromSmartCtl {
                 }
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     return $items
 }
@@ -1486,7 +1499,7 @@ function Get-DefragAnalysis {
                 $part = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction Stop | Select-Object -First 1
                 $disk = Get-Disk -Number $part.DiskNumber -ErrorAction Stop
                 $mediaType = $disk.MediaType
-            } catch {}
+            } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
             if ($Enabled -eq $true) {
                 try {
@@ -1511,7 +1524,7 @@ function Get-DefragAnalysis {
                 }
             }
 
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 Drive = $drive
                 FileSystem = $v.FileSystem
                 DriveType = $v.DriveType
@@ -1525,7 +1538,7 @@ function Get-DefragAnalysis {
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             Drive = "N/D"
             FileSystem = $null
             DriveType = $null
@@ -1572,14 +1585,14 @@ function Get-ChkdskScanInfo {
                 }
             }
 
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 Drive = $drive
                 Status = $status
                 Raw = $raw
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             Drive = "N/D"
             Status = "Error"
             Raw = $_.Exception.Message
@@ -1596,7 +1609,7 @@ function Get-BitLockerInfoSafe {
 
     try {
         foreach ($b in Get-BitLockerVolume -ErrorAction Stop) {
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 MountPoint = $b.MountPoint
                 VolumeStatus = $b.VolumeStatus
                 ProtectionStatus = $b.ProtectionStatus
@@ -1606,7 +1619,7 @@ function Get-BitLockerInfoSafe {
             }
         }
     } catch {
-        $items += New-Object PSObject -Property @{
+        $items += [PSCustomObject]@{
             MountPoint = "N/D"
             VolumeStatus = $null
             ProtectionStatus = $null
@@ -1658,7 +1671,7 @@ function Get-DiskAdvancedInfo {
         $maxDiskTemp = [math]::Round(($temps | Measure-Object -Maximum).Maximum, 1)
     }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         StorageReliability = $storageReliability
         WmiSmart = $wmiSmart
         Trim = $trim
@@ -1676,14 +1689,14 @@ function Get-StartupPrograms {
     try {
         $startup = @(Get-CimInstance Win32_StartupCommand)
         foreach ($s in $startup) {
-            $items += New-Object PSObject -Property @{
+            $items += [PSCustomObject]@{
                 Nombre = $s.Name
                 Comando = $s.Command
                 Ubicacion = $s.Location
                 Usuario = $s.User
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     return $items
 }
 
@@ -1694,22 +1707,22 @@ function Get-ServicesInfo {
     try {
         foreach ($svc in Get-Service) {
             $startType = $null
-            try { $startType = $svc.StartType.ToString() } catch {}
+            try { $startType = $svc.StartType.ToString() } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
-            $services += New-Object PSObject -Property @{
+            $services += [PSCustomObject]@{
                 Nombre = $svc.Name
                 DisplayName = $svc.DisplayName
                 Estado = $svc.Status.ToString()
                 TipoInicio = $startType
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     $running = @($services | Where-Object { $_.Estado -eq "Running" }).Count
     $autoRunning = @($services | Where-Object { ($_.TipoInicio -eq "Automatic") -and ($_.Estado -eq "Running") }).Count
     $autoStopped = @($services | Where-Object { ($_.TipoInicio -eq "Automatic") -and ($_.Estado -ne "Running") }).Count
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         TotalServicios = $services.Count
         ServiciosRunning = $running
         AutomaticosEjecutando = $autoRunning
@@ -1745,7 +1758,7 @@ function Get-CriticalEvents {
                         if ($msg.Length -gt 600) { $msg = $msg.Substring(0, 600) }
                     }
 
-                    $events += New-Object PSObject -Property @{
+                    $events += [PSCustomObject]@{
                         Fecha = $e.TimeCreated
                         Nivel = $e.LevelDisplayName
                         Provider = $e.ProviderName
@@ -1754,12 +1767,12 @@ function Get-CriticalEvents {
                     }
                 }
             }
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
     $events = @($events | Sort-Object Fecha -Descending)
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         DiasAnalizados = $Days
         TotalEventos = $events.Count
         Eventos = $events
@@ -1768,45 +1781,45 @@ function Get-CriticalEvents {
 
 function Get-SecurityInfo {
     Write-Info "Recolectando seguridad basica"
-    $def = New-Object PSObject -Property @{ Nota = "No disponible" }
+    $def = [PSCustomObject]@{ Nota = "No disponible" }
     $fw = @()
     $bit = @()
     $admins = @()
 
     try {
         $d = Get-MpComputerStatus -ErrorAction Stop
-        $def = New-Object PSObject -Property @{
+        $def = [PSCustomObject]@{
             AntivirusEnabled = $d.AntivirusEnabled
             RealTimeProtection = $d.RealTimeProtectionEnabled
             AMServiceEnabled = $d.AMServiceEnabled
             QuickScanAge = $d.QuickScanAge
             FullScanAge = $d.FullScanAge
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         foreach ($profile in Get-NetFirewallProfile) {
-            $fw += New-Object PSObject -Property @{
+            $fw += [PSCustomObject]@{
                 Perfil = $profile.Name
                 Enabled = $profile.Enabled
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         foreach ($b in Get-BitLockerVolume -ErrorAction Stop) {
-            $bit += New-Object PSObject -Property @{
+            $bit += [PSCustomObject]@{
                 MountPoint = $b.MountPoint
                 ProtectionStatus = $b.ProtectionStatus
                 VolumeStatus = $b.VolumeStatus
                 EncryptionMethod = $b.EncryptionMethod
             }
         }
-    } catch {}
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 
     try {
         foreach ($a in Get-LocalGroupMember -Group "Administrators" -ErrorAction Stop) {
-            $admins += New-Object PSObject -Property @{
+            $admins += [PSCustomObject]@{
                 Nombre = $a.Name
                 Tipo = $a.ObjectClass
             }
@@ -1814,15 +1827,15 @@ function Get-SecurityInfo {
     } catch {
         try {
             foreach ($a in Get-LocalGroupMember -Group "Administradores" -ErrorAction Stop) {
-                $admins += New-Object PSObject -Property @{
+                $admins += [PSCustomObject]@{
                     Nombre = $a.Name
                     Tipo = $a.ObjectClass
                 }
             }
-        } catch {}
+        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Defender = $def
         Firewall = $fw
         BitLocker = $bit
@@ -1831,16 +1844,13 @@ function Get-SecurityInfo {
 }
 
 function Add-Finding {
-    param([ref]$Score,[ref]$Findings,[int]$Penalty,[string]$Area,[string]$Severity,[string]$Message)
-    $Score.Value = $Score.Value - $Penalty
-    $arr = $Findings.Value
-    $arr += New-Object PSObject -Property @{
+    param([int]$Penalty,[string]$Area,[string]$Severity,[string]$Message)
+    return [PSCustomObject]@{
         Area = $Area
         Severidad = $Severity
         Penalidad = $Penalty
         Mensaje = $Message
     }
-    $Findings.Value = $arr
 }
 
 function Get-Score {
@@ -1851,74 +1861,93 @@ function Get-Score {
 
     if ($Reposo.CPUAveragePct -ne $null) {
         if ($Reposo.CPUAveragePct -gt 40) {
-            Add-Finding ([ref]$score) ([ref]$findings) 10 "CPU Reposo" "Alto" "CPU alta en reposo: $($Reposo.CPUAveragePct)%."
+            $score -= 10
+            $findings += Add-Finding -Penalty 10 -Area "CPU Reposo" -Severity "Alto" -Message "CPU alta en reposo: $($Reposo.CPUAveragePct)%."
         } elseif ($Reposo.CPUAveragePct -gt 20) {
-            Add-Finding ([ref]$score) ([ref]$findings) 5 "CPU Reposo" "Medio" "CPU moderada en reposo: $($Reposo.CPUAveragePct)%."
+            $score -= 5
+            $findings += Add-Finding -Penalty 5 -Area "CPU Reposo" -Severity "Medio" -Message "CPU moderada en reposo: $($Reposo.CPUAveragePct)%."
         }
     }
 
     if ($Reposo.RAMAveragePct -ne $null) {
         if ($Reposo.RAMAveragePct -gt 90) {
-            Add-Finding ([ref]$score) ([ref]$findings) 15 "RAM" "Critico" "RAM critica en reposo: $($Reposo.RAMAveragePct)%."
+            $score -= 15
+            $findings += Add-Finding -Penalty 15 -Area "RAM" -Severity "Critico" -Message "RAM critica en reposo: $($Reposo.RAMAveragePct)%."
         } elseif ($Reposo.RAMAveragePct -gt 80) {
-            Add-Finding ([ref]$score) ([ref]$findings) 10 "RAM" "Alto" "RAM alta en reposo: $($Reposo.RAMAveragePct)%."
+            $score -= 10
+            $findings += Add-Finding -Penalty 10 -Area "RAM" -Severity "Alto" -Message "RAM alta en reposo: $($Reposo.RAMAveragePct)%."
         } elseif ($Reposo.RAMAveragePct -gt 65) {
-            Add-Finding ([ref]$score) ([ref]$findings) 5 "RAM" "Medio" "RAM moderada en reposo: $($Reposo.RAMAveragePct)%."
+            $score -= 5
+            $findings += Add-Finding -Penalty 5 -Area "RAM" -Severity "Medio" -Message "RAM moderada en reposo: $($Reposo.RAMAveragePct)%."
         }
     }
 
     if ($Benchmark.Phase.TempMaxC -ne $null) {
         if ($Benchmark.Phase.TempMaxC -gt 95) {
-            Add-Finding ([ref]$score) ([ref]$findings) 20 "Temperatura Carga" "Critico" "Temperatura maxima critica durante prueba: $($Benchmark.Phase.TempMaxC) C."
+            $score -= 20
+            $findings += Add-Finding -Penalty 20 -Area "Temperatura Carga" -Severity "Critico" -Message "Temperatura maxima critica durante prueba: $($Benchmark.Phase.TempMaxC) C."
         } elseif ($Benchmark.Phase.TempMaxC -gt 85) {
-            Add-Finding ([ref]$score) ([ref]$findings) 15 "Temperatura Carga" "Alto" "Temperatura maxima alta durante prueba: $($Benchmark.Phase.TempMaxC) C."
+            $score -= 15
+            $findings += Add-Finding -Penalty 15 -Area "Temperatura Carga" -Severity "Alto" -Message "Temperatura maxima alta durante prueba: $($Benchmark.Phase.TempMaxC) C."
         } elseif ($Benchmark.Phase.TempMaxC -gt 75) {
-            Add-Finding ([ref]$score) ([ref]$findings) 7 "Temperatura Carga" "Medio" "Temperatura maxima moderada durante prueba: $($Benchmark.Phase.TempMaxC) C."
+            $score -= 7
+            $findings += Add-Finding -Penalty 7 -Area "Temperatura Carga" -Severity "Medio" -Message "Temperatura maxima moderada durante prueba: $($Benchmark.Phase.TempMaxC) C."
         }
     }
 
     if (($Reposo.TempAverageC -ne $null) -and ($Benchmark.Phase.TempMaxC -ne $null)) {
         $deltaTemp = [math]::Round($Benchmark.Phase.TempMaxC - $Reposo.TempAverageC, 1)
         if ($deltaTemp -gt 40) {
-            Add-Finding ([ref]$score) ([ref]$findings) 10 "Temperatura Delta" "Alto" "Aumento termico fuerte: +$deltaTemp C entre reposo y carga."
+            $score -= 10
+            $findings += Add-Finding -Penalty 10 -Area "Temperatura Delta" -Severity "Alto" -Message "Aumento termico fuerte: +$deltaTemp C entre reposo y carga."
         } elseif ($deltaTemp -gt 30) {
-            Add-Finding ([ref]$score) ([ref]$findings) 5 "Temperatura Delta" "Medio" "Aumento termico moderado: +$deltaTemp C entre reposo y carga."
+            $score -= 5
+            $findings += Add-Finding -Penalty 5 -Area "Temperatura Delta" -Severity "Medio" -Message "Aumento termico moderado: +$deltaTemp C entre reposo y carga."
         }
     }
 
     foreach ($v in $Disks.Volumes) {
         if ($v.LibrePct -lt 10) {
-            Add-Finding ([ref]$score) ([ref]$findings) 10 "Disco" "Critico" "Unidad $($v.Unidad) con espacio critico: $($v.LibrePct)%."
+            $score -= 10
+            $findings += Add-Finding -Penalty 10 -Area "Disco" -Severity "Critico" -Message "Unidad $($v.Unidad) con espacio critico: $($v.LibrePct)%."
         } elseif ($v.LibrePct -lt 15) {
-            Add-Finding ([ref]$score) ([ref]$findings) 6 "Disco" "Alto" "Unidad $($v.Unidad) con poco espacio: $($v.LibrePct)%."
+            $score -= 6
+            $findings += Add-Finding -Penalty 6 -Area "Disco" -Severity "Alto" -Message "Unidad $($v.Unidad) con poco espacio: $($v.LibrePct)%."
         } elseif ($v.LibrePct -lt 25) {
-            Add-Finding ([ref]$score) ([ref]$findings) 3 "Disco" "Medio" "Unidad $($v.Unidad) con espacio bajo: $($v.LibrePct)%."
+            $score -= 3
+            $findings += Add-Finding -Penalty 3 -Area "Disco" -Severity "Medio" -Message "Unidad $($v.Unidad) con espacio bajo: $($v.LibrePct)%."
         }
     }
 
     foreach ($d in $Disks.PhysicalDisk) {
         if (($d.HealthStatus -ne $null) -and ($d.HealthStatus -ne "Healthy")) {
-            Add-Finding ([ref]$score) ([ref]$findings) 15 "Disco" "Critico" "Disco $($d.Modelo) salud no saludable: $($d.HealthStatus)."
+            $score -= 15
+            $findings += Add-Finding -Penalty 15 -Area "Disco" -Severity "Critico" -Message "Disco $($d.Modelo) salud no saludable: $($d.HealthStatus)."
         }
         if (($d.PhysicalMediaType -eq "HDD") -or ($d.MediaType -like "*Hard*")) {
-            Add-Finding ([ref]$score) ([ref]$findings) 5 "Disco" "Medio" "Disco mecanico detectado: $($d.Modelo)."
+            $score -= 5
+            $findings += Add-Finding -Penalty 5 -Area "Disco" -Severity "Medio" -Message "Disco mecanico detectado: $($d.Modelo)."
         }
     }
 
     if ($Benchmark.DiskWriteMBs -ne $null) {
         if ($Benchmark.DiskWriteMBs -lt 25) {
-            Add-Finding ([ref]$score) ([ref]$findings) 10 "Benchmark Disco" "Alto" "Escritura promedio muy baja durante prueba: $($Benchmark.DiskWriteMBs) MB/s."
+            $score -= 10
+            $findings += Add-Finding -Penalty 10 -Area "Benchmark Disco" -Severity "Alto" -Message "Escritura promedio muy baja durante prueba: $($Benchmark.DiskWriteMBs) MB/s."
         } elseif ($Benchmark.DiskWriteMBs -lt 70) {
-            Add-Finding ([ref]$score) ([ref]$findings) 5 "Benchmark Disco" "Medio" "Escritura promedio baja/moderada durante prueba: $($Benchmark.DiskWriteMBs) MB/s."
+            $score -= 5
+            $findings += Add-Finding -Penalty 5 -Area "Benchmark Disco" -Severity "Medio" -Message "Escritura promedio baja/moderada durante prueba: $($Benchmark.DiskWriteMBs) MB/s."
         }
     }
 
     foreach ($s in $Smart) {
         if (($s.Available -eq $true) -and ($s.Health -ne $null) -and ($s.Health -notmatch "PASSED|OK")) {
-            Add-Finding ([ref]$score) ([ref]$findings) 20 "SMART" "Critico" "SMART no saludable en $($s.Device): $($s.Health)."
+            $score -= 20
+            $findings += Add-Finding -Penalty 20 -Area "SMART" -Severity "Critico" -Message "SMART no saludable en $($s.Device): $($s.Health)."
         }
         if ($s.TemperatureC -gt 60) {
-            Add-Finding ([ref]$score) ([ref]$findings) 10 "SMART" "Alto" "Temperatura de disco alta: $($s.TemperatureC) C."
+            $score -= 10
+            $findings += Add-Finding -Penalty 10 -Area "SMART" -Severity "Alto" -Message "Temperatura de disco alta: $($s.TemperatureC) C."
         }
     }
 
@@ -1926,74 +1955,88 @@ function Get-Score {
     if ($DiskAdvanced -ne $null) {
         foreach ($w in $DiskAdvanced.WmiSmart) {
             if ($w.PredictFailure -eq $true) {
-                Add-Finding ([ref]$score) ([ref]$findings) 25 "SMART WMI" "Critico" "Windows predice falla SMART: $($w.InstanceName). Reason=$($w.Reason)"
+                $score -= 25
+                $findings += Add-Finding -Penalty 25 -Area "SMART WMI" -Severity "Critico" -Message "Windows predice falla SMART: $($w.InstanceName). Reason=$($w.Reason)"
             }
         }
 
         foreach ($r in $DiskAdvanced.StorageReliability) {
             if ($r.ReadErrorsTotal -gt 0) {
-                Add-Finding ([ref]$score) ([ref]$findings) 8 "Disco Errores" "Alto" "Errores de lectura reportados por Storage Reliability: $($r.ReadErrorsTotal)."
+                $score -= 8
+                $findings += Add-Finding -Penalty 8 -Area "Disco Errores" -Severity "Alto" -Message "Errores de lectura reportados por Storage Reliability: $($r.ReadErrorsTotal)."
             }
 
             if ($r.WriteErrorsTotal -gt 0) {
-                Add-Finding ([ref]$score) ([ref]$findings) 8 "Disco Errores" "Alto" "Errores de escritura reportados por Storage Reliability: $($r.WriteErrorsTotal)."
+                $score -= 8
+                $findings += Add-Finding -Penalty 8 -Area "Disco Errores" -Severity "Alto" -Message "Errores de escritura reportados por Storage Reliability: $($r.WriteErrorsTotal)."
             }
 
             if ($r.Wear -ne $null) {
                 if ($r.Wear -gt 80) {
-                    Add-Finding ([ref]$score) ([ref]$findings) 15 "Desgaste SSD" "Alto" "Desgaste SSD alto reportado: $($r.Wear)."
+                    $score -= 15
+                    $findings += Add-Finding -Penalty 15 -Area "Desgaste SSD" -Severity "Alto" -Message "Desgaste SSD alto reportado: $($r.Wear)."
                 } elseif ($r.Wear -gt 60) {
-                    Add-Finding ([ref]$score) ([ref]$findings) 8 "Desgaste SSD" "Medio" "Desgaste SSD moderado reportado: $($r.Wear)."
+                    $score -= 8
+                    $findings += Add-Finding -Penalty 8 -Area "Desgaste SSD" -Severity "Medio" -Message "Desgaste SSD moderado reportado: $($r.Wear)."
                 }
             }
 
             if ($r.TemperatureC -gt 60) {
-                Add-Finding ([ref]$score) ([ref]$findings) 10 "Temperatura Disco" "Alto" "Temperatura de disco alta: $($r.TemperatureC) C."
+                $score -= 10
+                $findings += Add-Finding -Penalty 10 -Area "Temperatura Disco" -Severity "Alto" -Message "Temperatura de disco alta: $($r.TemperatureC) C."
             } elseif ($r.TemperatureC -gt 50) {
-                Add-Finding ([ref]$score) ([ref]$findings) 5 "Temperatura Disco" "Medio" "Temperatura de disco moderada: $($r.TemperatureC) C."
+                $score -= 5
+                $findings += Add-Finding -Penalty 5 -Area "Temperatura Disco" -Severity "Medio" -Message "Temperatura de disco moderada: $($r.TemperatureC) C."
             }
         }
 
         foreach ($f in $DiskAdvanced.Fragmentation) {
             if ($f.FragmentationPercent -ne $null) {
                 if (($f.MediaType -notmatch "SSD|Unspecified") -and ($f.FragmentationPercent -gt 20)) {
-                    Add-Finding ([ref]$score) ([ref]$findings) 6 "Fragmentacion" "Medio" "Fragmentacion alta en $($f.Drive): $($f.FragmentationPercent)%."
+                    $score -= 6
+                    $findings += Add-Finding -Penalty 6 -Area "Fragmentacion" -Severity "Medio" -Message "Fragmentacion alta en $($f.Drive): $($f.FragmentationPercent)%."
                 }
             }
         }
 
         foreach ($c in $DiskAdvanced.Chkdsk) {
             if ($c.Status -eq "Problemas detectados") {
-                Add-Finding ([ref]$score) ([ref]$findings) 15 "CHKDSK" "Critico" "CHKDSK reporta problemas en $($c.Drive)."
+                $score -= 15
+                $findings += Add-Finding -Penalty 15 -Area "CHKDSK" -Severity "Critico" -Message "CHKDSK reporta problemas en $($c.Drive)."
             }
         }
 
         foreach ($t in $DiskAdvanced.Trim) {
             if ($t.TrimEnabled -eq $false) {
-                Add-Finding ([ref]$score) ([ref]$findings) 5 "TRIM" "Medio" "TRIM parece desactivado para $($t.FileSystem)."
+                $score -= 5
+                $findings += Add-Finding -Penalty 5 -Area "TRIM" -Severity "Medio" -Message "TRIM parece desactivado para $($t.FileSystem)."
             }
         }
     }
 
     if ($Startup.Count -gt 35) {
-        Add-Finding ([ref]$score) ([ref]$findings) 10 "Inicio" "Alto" "Exceso de programas de inicio: $($Startup.Count)."
+        $score -= 10
+        $findings += Add-Finding -Penalty 10 -Area "Inicio" -Severity "Alto" -Message "Exceso de programas de inicio: $($Startup.Count)."
     } elseif ($Startup.Count -gt 20) {
-        Add-Finding ([ref]$score) ([ref]$findings) 6 "Inicio" "Medio" "Muchos programas de inicio: $($Startup.Count)."
+        $score -= 6
+        $findings += Add-Finding -Penalty 6 -Area "Inicio" -Severity "Medio" -Message "Muchos programas de inicio: $($Startup.Count)."
     }
 
     if ($Events.TotalEventos -gt 20) {
-        Add-Finding ([ref]$score) ([ref]$findings) 15 "Eventos" "Critico" "Muchos eventos relevantes: $($Events.TotalEventos)."
+        $score -= 15
+        $findings += Add-Finding -Penalty 15 -Area "Eventos" -Severity "Critico" -Message "Muchos eventos relevantes: $($Events.TotalEventos)."
     } elseif ($Events.TotalEventos -gt 10) {
-        Add-Finding ([ref]$score) ([ref]$findings) 10 "Eventos" "Alto" "Eventos elevados: $($Events.TotalEventos)."
+        $score -= 10
+        $findings += Add-Finding -Penalty 10 -Area "Eventos" -Severity "Alto" -Message "Eventos elevados: $($Events.TotalEventos)."
     } elseif ($Events.TotalEventos -gt 3) {
-        Add-Finding ([ref]$score) ([ref]$findings) 5 "Eventos" "Medio" "Algunos eventos relevantes: $($Events.TotalEventos)."
+        $score -= 5
+        $findings += Add-Finding -Penalty 5 -Area "Eventos" -Severity "Medio" -Message "Algunos eventos relevantes: $($Events.TotalEventos)."
     }
 
-    try {
-        if ($Security.Defender.RealTimeProtection -eq $false) {
-            Add-Finding ([ref]$score) ([ref]$findings) 5 "Seguridad" "Medio" "Defender sin proteccion en tiempo real."
-        }
-    } catch {}
+    if ($null -ne $Security.Defender -and $Security.Defender.RealTimeProtection -eq $false) {
+        $score -= 5
+        $findings += Add-Finding -Penalty 5 -Area "Seguridad" -Severity "Medio" -Message "Defender sin proteccion en tiempo real."
+    }
 
     if ($score -lt 0) { $score = 0 }
 
@@ -2003,7 +2046,7 @@ function Get-Score {
     elseif ($score -ge 60) { $estado = "Regular" }
     elseif ($score -ge 40) { $estado = "Malo" }
 
-    return New-Object PSObject -Property @{
+    return [PSCustomObject]@{
         Score = $score
         Estado = $estado
         Hallazgos = $findings
@@ -2048,26 +2091,26 @@ function Get-Recommendations {
 function Export-Tables {
     param($Folder, $Report)
 
-    try { $Report.Reposo.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_reposo.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Benchmark.Phase.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_carga.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Processes.TopCPU | Export-Csv (Join-Path $Folder "procesos_top_cpu.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Processes.TopRAM | Export-Csv (Join-Path $Folder "procesos_top_ram.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Disks.Volumes | Export-Csv (Join-Path $Folder "volumenes.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Disks.PhysicalDisk | Export-Csv (Join-Path $Folder "discos_fisicos.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Disks.DiskPerf | Export-Csv (Join-Path $Folder "disco_perf.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.StorageReliability | Export-Csv (Join-Path $Folder "disco_storage_reliability.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.WmiSmart | Export-Csv (Join-Path $Folder "disco_wmi_smart.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.Trim | Export-Csv (Join-Path $Folder "disco_trim.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.Fragmentation | Export-Csv (Join-Path $Folder "disco_fragmentacion.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.Chkdsk | Export-Csv (Join-Path $Folder "disco_chkdsk_scan.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.BitLocker | Export-Csv (Join-Path $Folder "disco_bitlocker.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.DiskAdvanced.SmartCtlDiskTemperature | Export-Csv (Join-Path $Folder "disco_temperatura_smartctl.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.TemperaturesFinal | Export-Csv (Join-Path $Folder "temperaturas_finales.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.SmartCtl | Select-Object Device,Available,Health,TemperatureC | Export-Csv (Join-Path $Folder "smartctl_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.StartupPrograms | Export-Csv (Join-Path $Folder "programas_inicio.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Events.Eventos | Export-Csv (Join-Path $Folder "eventos.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Events.Eventos | Group-Object Provider,Nivel | ForEach-Object { New-Object PSObject -Property @{ Grupo = $_.Name; Cantidad = $_.Count } } | Export-Csv (Join-Path $Folder "eventos_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch {}
-    try { $Report.Services.ListaServicios | Export-Csv (Join-Path $Folder "servicios.csv") -NoTypeInformation -Encoding UTF8 } catch {}
+    try { $Report.Reposo.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_reposo.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Benchmark.Phase.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_carga.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Processes.TopCPU | Export-Csv (Join-Path $Folder "procesos_top_cpu.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Processes.TopRAM | Export-Csv (Join-Path $Folder "procesos_top_ram.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Disks.Volumes | Export-Csv (Join-Path $Folder "volumenes.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Disks.PhysicalDisk | Export-Csv (Join-Path $Folder "discos_fisicos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Disks.DiskPerf | Export-Csv (Join-Path $Folder "disco_perf.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.StorageReliability | Export-Csv (Join-Path $Folder "disco_storage_reliability.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.WmiSmart | Export-Csv (Join-Path $Folder "disco_wmi_smart.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.Trim | Export-Csv (Join-Path $Folder "disco_trim.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.Fragmentation | Export-Csv (Join-Path $Folder "disco_fragmentacion.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.Chkdsk | Export-Csv (Join-Path $Folder "disco_chkdsk_scan.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.BitLocker | Export-Csv (Join-Path $Folder "disco_bitlocker.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.DiskAdvanced.SmartCtlDiskTemperature | Export-Csv (Join-Path $Folder "disco_temperatura_smartctl.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.TemperaturesFinal | Export-Csv (Join-Path $Folder "temperaturas_finales.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.SmartCtl | Select-Object Device,Available,Health,TemperatureC | Export-Csv (Join-Path $Folder "smartctl_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.StartupPrograms | Export-Csv (Join-Path $Folder "programas_inicio.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Events.Eventos | Export-Csv (Join-Path $Folder "eventos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Events.Eventos | Group-Object Provider,Nivel | ForEach-Object { [PSCustomObject]@{ Grupo = $_.Name; Cantidad = $_.Count } } | Export-Csv (Join-Path $Folder "eventos_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Services.ListaServicios | Export-Csv (Join-Path $Folder "servicios.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 }
 
 function New-SummaryText {
@@ -2150,153 +2193,166 @@ function New-HtmlReport {
     if ($Report.Benchmark.Phase.TempMaxC -ne $null) { $tempCargaMaxText = [string]$Report.Benchmark.Phase.TempMaxC }
     if ($Report.Benchmark.Phase.TempAverageC -ne $null) { $tempCargaAvgText = [string]$Report.Benchmark.Phase.TempAverageC }
 
-    $html = ""
-    $html += "<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'>"
-    $html += "<title>Reporte Rendimiento V3.6 - $(Html-Encode $Report.System.Hostname)</title>"
-    $html += "<style>"
-    $html += "body{font-family:Segoe UI,Arial,sans-serif;background:#f4f6f8;color:#222;margin:0;padding:24px}"
-    $html += ".container{max-width:1200px;margin:auto}.header{background:#111827;color:white;padding:24px;border-radius:14px;margin-bottom:20px}"
-    $html += ".grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:white;padding:18px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:16px}"
-    $html += ".metric{font-size:28px;font-weight:700}.label{color:#6b7280;font-size:13px}.good{color:#047857}.ok{color:#2563eb}.warn{color:#b45309}.bad{color:#b91c1c}"
-    $html += "table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#e5e7eb;text-align:left;padding:8px;font-size:13px}td{border-bottom:1px solid #e5e7eb;padding:8px;font-size:13px;vertical-align:top}"
-    $html += ".badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e5e7eb;font-size:12px}.finding-Critico{color:#991b1b;font-weight:700}.finding-Alto{color:#b45309;font-weight:700}"
-    $html += "@media print{body{background:white}.card{box-shadow:none;border:1px solid #ddd}}"
-    $html += "</style></head><body><div class='container'>"
+    $sb = [System.Text.StringBuilder]::new()
+    $null = $sb.Append(@"
+<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'>
+<title>Reporte Rendimiento V3.6 - $(Html-Encode $Report.System.Hostname)</title>
+<style>
+body{font-family:Segoe UI,Arial,sans-serif;background:#f4f6f8;color:#222;margin:0;padding:24px}
+.container{max-width:1200px;margin:auto}.header{background:#111827;color:white;padding:24px;border-radius:14px;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:white;padding:18px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:16px}
+.metric{font-size:28px;font-weight:700}.label{color:#6b7280;font-size:13px}.good{color:#047857}.ok{color:#2563eb}.warn{color:#b45309}.bad{color:#b91c1c}
+table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#e5e7eb;text-align:left;padding:8px;font-size:13px}td{border-bottom:1px solid #e5e7eb;padding:8px;font-size:13px;vertical-align:top}
+.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e5e7eb;font-size:12px}.finding-Critico{color:#991b1b;font-weight:700}.finding-Alto{color:#b45309;font-weight:700}
+@media print{body{background:white}.card{box-shadow:none;border:1px solid #ddd}}
+</style></head><body><div class='container'>
 
-    $html += "<div class='header'><h1>Reporte de Rendimiento V3.6 - Servicio Tecnico</h1>"
-    $html += "<p>Modo: <strong>$(Html-Encode $Report.Metadata.Modo)</strong> | Cliente: <strong>$(Html-Encode $Report.Metadata.Cliente)</strong> | OT: <strong>$(Html-Encode $Report.Metadata.OrdenTrabajo)</strong></p>"
-    $html += "<p>Tecnico: $(Html-Encode $Report.Metadata.Tecnico) | Fecha: $($Report.Metadata.Fecha)</p></div>"
+"@)
 
-    $html += "<div class='grid'>"
-    $html += "<div class='card'><div class='label'>Score</div><div class='metric $scoreClass'>$($Report.Score.Score)/100</div><div class='badge'>$($Report.Score.Estado)</div></div>"
-    $html += "<div class='card'><div class='label'>Temp max reposo</div><div class='metric'>$tempReposoMaxText C</div><div class='label'>Prom: $tempReposoAvgText C</div></div>"
-    $html += "<div class='card'><div class='label'>Temp max carga</div><div class='metric'>$tempCargaMaxText C</div><div class='label'>Prom: $tempCargaAvgText C</div></div>"
-    $html += "<div class='card'><div class='label'>Duracion prueba</div><div class='metric'>$($Report.Metadata.DuracionTotalSeg)s</div><div class='label'>Reposo + carga</div></div>"
-    $html += "</div>"
+    $null = $sb.Append(@"
+<div class='header'><h1>Reporte de Rendimiento V3.6 - Servicio Tecnico</h1>
+<p>Modo: <strong>$(Html-Encode $Report.Metadata.Modo)</strong> | Cliente: <strong>$(Html-Encode $Report.Metadata.Cliente)</strong> | OT: <strong>$(Html-Encode $Report.Metadata.OrdenTrabajo)</strong></p>
+<p>Tecnico: $(Html-Encode $Report.Metadata.Tecnico) | Fecha: $($Report.Metadata.Fecha)</p></div>
 
-    $html += "<div class='card'><h2>Resumen reposo vs carga</h2><table>"
-    $html += "<tr><th>Metrica</th><th>Reposo</th><th>Carga</th></tr>"
-    $html += "<tr><td>Duracion</td><td>$($Report.Reposo.DuracionSegundos) s</td><td>$($Report.Benchmark.Phase.DuracionSegundos) s</td></tr>"
-    $html += "<tr><td>CPU promedio</td><td>$($Report.Reposo.CPUAveragePct)%</td><td>$($Report.Benchmark.Phase.CPUAveragePct)%</td></tr>"
-    $html += "<tr><td>CPU maximo</td><td>$($Report.Reposo.CPUMaxPct)%</td><td>$($Report.Benchmark.Phase.CPUMaxPct)%</td></tr>"
-    $html += "<tr><td>RAM promedio</td><td>$($Report.Reposo.RAMAveragePct)%</td><td>$($Report.Benchmark.Phase.RAMAveragePct)%</td></tr>"
-    $html += "<tr><td>Temperatura promedio</td><td>$($Report.Reposo.TempAverageC) C</td><td>$($Report.Benchmark.Phase.TempAverageC) C</td></tr>"
-    $html += "<tr><td>Temperatura maxima</td><td>$($Report.Reposo.TempMaxC) C</td><td>$($Report.Benchmark.Phase.TempMaxC) C</td></tr>"
-    $html += "<tr><td>Disco escritura</td><td>-</td><td>$($Report.Benchmark.DiskWriteMBs) MB/s</td></tr>"
-    $html += "<tr><td>Disco lectura</td><td>-</td><td>$($Report.Benchmark.DiskReadMBs) MB/s</td></tr>"
-    $html += "</table></div>"
+<div class='grid'>
+<div class='card'><div class='label'>Score</div><div class='metric $scoreClass'>$($Report.Score.Score)/100</div><div class='badge'>$($Report.Score.Estado)</div></div>
+<div class='card'><div class='label'>Temp max reposo</div><div class='metric'>$tempReposoMaxText C</div><div class='label'>Prom: $tempReposoAvgText C</div></div>
+<div class='card'><div class='label'>Temp max carga</div><div class='metric'>$tempCargaMaxText C</div><div class='label'>Prom: $tempCargaAvgText C</div></div>
+<div class='card'><div class='label'>Duracion prueba</div><div class='metric'>$($Report.Metadata.DuracionTotalSeg)s</div><div class='label'>Reposo + carga</div></div>
+</div>
 
-    $html += "<div class='card'><h2>Ficha del equipo</h2><table>"
-    $html += "<tr><th>Campo</th><th>Valor</th></tr>"
-    $html += "<tr><td>Hostname</td><td>$(Html-Encode $Report.System.Hostname)</td></tr>"
-    $html += "<tr><td>Usuario</td><td>$(Html-Encode $Report.System.Usuario)</td></tr>"
-    $html += "<tr><td>Administrador</td><td>$($Report.System.EsAdministrador)</td></tr>"
-    $html += "<tr><td>Fabricante / Modelo</td><td>$(Html-Encode $Report.System.Fabricante) $(Html-Encode $Report.System.Modelo)</td></tr>"
-    $html += "<tr><td>Serial</td><td>$(Html-Encode $Report.System.Serial)</td></tr>"
-    $html += "<tr><td>Windows</td><td>$(Html-Encode $Report.System.Windows) $($Report.System.Version) Build $($Report.System.Build)</td></tr>"
-    $html += "<tr><td>CPU</td><td>$(Html-Encode $Report.System.CPU) / Cores $($Report.System.CPUCores) / Hilos $($Report.System.CPUThreads)</td></tr>"
-    $html += "<tr><td>RAM</td><td>$($Report.System.RAMTotalGB) GB</td></tr>"
-    $html += "</table></div>"
+"@)
 
-    $html += "<div class='card'><h2>Sensores temperatura finales</h2><table><tr><th>Sensor</th><th>Tipo</th><th>Temperatura C</th><th>Fuente</th></tr>"
+    $null = $sb.Append(@"
+<div class='card'><h2>Resumen reposo vs carga</h2><table>
+<tr><th>Metrica</th><th>Reposo</th><th>Carga</th></tr>
+<tr><td>Duracion</td><td>$($Report.Reposo.DuracionSegundos) s</td><td>$($Report.Benchmark.Phase.DuracionSegundos) s</td></tr>
+<tr><td>CPU promedio</td><td>$($Report.Reposo.CPUAveragePct)%</td><td>$($Report.Benchmark.Phase.CPUAveragePct)%</td></tr>
+<tr><td>CPU maximo</td><td>$($Report.Reposo.CPUMaxPct)%</td><td>$($Report.Benchmark.Phase.CPUMaxPct)%</td></tr>
+<tr><td>RAM promedio</td><td>$($Report.Reposo.RAMAveragePct)%</td><td>$($Report.Benchmark.Phase.RAMAveragePct)%</td></tr>
+<tr><td>Temperatura promedio</td><td>$($Report.Reposo.TempAverageC) C</td><td>$($Report.Benchmark.Phase.TempAverageC) C</td></tr>
+<tr><td>Temperatura maxima</td><td>$($Report.Reposo.TempMaxC) C</td><td>$($Report.Benchmark.Phase.TempMaxC) C</td></tr>
+<tr><td>Disco escritura</td><td>-</td><td>$($Report.Benchmark.DiskWriteMBs) MB/s</td></tr>
+<tr><td>Disco lectura</td><td>-</td><td>$($Report.Benchmark.DiskReadMBs) MB/s</td></tr>
+</table></div>
+
+"@)
+
+    $null = $sb.Append(@"
+<div class='card'><h2>Ficha del equipo</h2><table>
+<tr><th>Campo</th><th>Valor</th></tr>
+<tr><td>Hostname</td><td>$(Html-Encode $Report.System.Hostname)</td></tr>
+<tr><td>Usuario</td><td>$(Html-Encode $Report.System.Usuario)</td></tr>
+<tr><td>Administrador</td><td>$($Report.System.EsAdministrador)</td></tr>
+<tr><td>Fabricante / Modelo</td><td>$(Html-Encode $Report.System.Fabricante) $(Html-Encode $Report.System.Modelo)</td></tr>
+<tr><td>Serial</td><td>$(Html-Encode $Report.System.Serial)</td></tr>
+<tr><td>Windows</td><td>$(Html-Encode $Report.System.Windows) $($Report.System.Version) Build $($Report.System.Build)</td></tr>
+<tr><td>CPU</td><td>$(Html-Encode $Report.System.CPU) / Cores $($Report.System.CPUCores) / Hilos $($Report.System.CPUThreads)</td></tr>
+<tr><td>RAM</td><td>$($Report.System.RAMTotalGB) GB</td></tr>
+</table></div>
+
+"@)
+
+    $null = $sb.Append("<div class='card'><h2>Sensores temperatura finales</h2><table><tr><th>Sensor</th><th>Tipo</th><th>Temperatura C</th><th>Fuente</th></tr>")
     foreach ($t in $Report.TemperaturesFinal) {
-        $html += "<tr><td>$(Html-Encode $t.Sensor)</td><td>$(Html-Encode $t.Tipo)</td><td>$($t.TemperaturaC)</td><td>$(Html-Encode $t.Fuente)</td></tr>"
+        $null = $sb.Append("<tr><td>$(Html-Encode $t.Sensor)</td><td>$(Html-Encode $t.Tipo)</td><td>$($t.TemperaturaC)</td><td>$(Html-Encode $t.Fuente)</td></tr>")
     }
-    $html += "</table></div>"
+    $null = $sb.Append("</table></div>")
 
-    $html += "<div class='card'><h2>Discos y volumenes</h2><table><tr><th>Unidad</th><th>Nombre</th><th>FS</th><th>Tamano GB</th><th>Libre GB</th><th>Libre %</th><th>Usado %</th></tr>"
+    $null = $sb.Append("<div class='card'><h2>Discos y volumenes</h2><table><tr><th>Unidad</th><th>Nombre</th><th>FS</th><th>Tamano GB</th><th>Libre GB</th><th>Libre %</th><th>Usado %</th></tr>")
     foreach ($v in $Report.Disks.Volumes) {
-        $html += "<tr><td>$($v.Unidad)</td><td>$(Html-Encode $v.Nombre)</td><td>$($v.Sistema)</td><td>$($v.TamanoGB)</td><td>$($v.LibreGB)</td><td>$($v.LibrePct)</td><td>$($v.UsadoPct)</td></tr>"
+        $null = $sb.Append("<tr><td>$($v.Unidad)</td><td>$(Html-Encode $v.Nombre)</td><td>$($v.Sistema)</td><td>$($v.TamanoGB)</td><td>$($v.LibreGB)</td><td>$($v.LibrePct)</td><td>$($v.UsadoPct)</td></tr>")
     }
-    $html += "</table></div>"
+    $null = $sb.Append("</table></div>")
 
+    $null = $sb.Append(@"
+<div class='card'><h2>Disco avanzado</h2>
+<p><strong>Temperatura maxima disco:</strong> $($Report.DiskAdvanced.MaxDiskTemperatureC) C</p>
 
-    $html += "<div class='card'><h2>Disco avanzado</h2>"
-    $html += "<p><strong>Temperatura maxima disco:</strong> $($Report.DiskAdvanced.MaxDiskTemperatureC) C</p>"
+"@)
 
-    $html += "<h3>Storage Reliability</h3><table><tr><th>Device</th><th>Temp C</th><th>Temp Max C</th><th>Wear</th><th>PowerOnHours</th><th>ReadErr</th><th>WriteErr</th><th>ReadLatencyMax</th><th>WriteLatencyMax</th></tr>"
+    $null = $sb.Append("<h3>Storage Reliability</h3><table><tr><th>Device</th><th>Temp C</th><th>Temp Max C</th><th>Wear</th><th>PowerOnHours</th><th>ReadErr</th><th>WriteErr</th><th>ReadLatencyMax</th><th>WriteLatencyMax</th></tr>")
     foreach ($r in $Report.DiskAdvanced.StorageReliability) {
-        $html += "<tr><td>$($r.DeviceId)</td><td>$($r.TemperatureC)</td><td>$($r.TemperatureMaxC)</td><td>$($r.Wear)</td><td>$($r.PowerOnHours)</td><td>$($r.ReadErrorsTotal)</td><td>$($r.WriteErrorsTotal)</td><td>$($r.ReadLatencyMax)</td><td>$($r.WriteLatencyMax)</td></tr>"
+        $null = $sb.Append("<tr><td>$($r.DeviceId)</td><td>$($r.TemperatureC)</td><td>$($r.TemperatureMaxC)</td><td>$($r.Wear)</td><td>$($r.PowerOnHours)</td><td>$($r.ReadErrorsTotal)</td><td>$($r.WriteErrorsTotal)</td><td>$($r.ReadLatencyMax)</td><td>$($r.WriteLatencyMax)</td></tr>")
     }
-    $html += "</table>"
+    $null = $sb.Append("</table>")
 
-    $html += "<h3>SMART WMI</h3><table><tr><th>Instance</th><th>PredictFailure</th><th>Reason</th></tr>"
+    $null = $sb.Append("<h3>SMART WMI</h3><table><tr><th>Instance</th><th>PredictFailure</th><th>Reason</th></tr>")
     foreach ($w in $Report.DiskAdvanced.WmiSmart) {
-        $html += "<tr><td>$(Html-Encode $w.InstanceName)</td><td>$($w.PredictFailure)</td><td>$($w.Reason)</td></tr>"
+        $null = $sb.Append("<tr><td>$(Html-Encode $w.InstanceName)</td><td>$($w.PredictFailure)</td><td>$($w.Reason)</td></tr>")
     }
-    $html += "</table>"
+    $null = $sb.Append("</table>")
 
-    $html += "<h3>TRIM</h3><table><tr><th>FileSystem</th><th>TrimEnabled</th><th>Raw</th></tr>"
+    $null = $sb.Append("<h3>TRIM</h3><table><tr><th>FileSystem</th><th>TrimEnabled</th><th>Raw</th></tr>")
     foreach ($t in $Report.DiskAdvanced.Trim) {
-        $html += "<tr><td>$($t.FileSystem)</td><td>$($t.TrimEnabled)</td><td>$(Html-Encode $t.Raw)</td></tr>"
+        $null = $sb.Append("<tr><td>$($t.FileSystem)</td><td>$($t.TrimEnabled)</td><td>$(Html-Encode $t.Raw)</td></tr>")
     }
-    $html += "</table>"
+    $null = $sb.Append("</table>")
 
-    $html += "<h3>Fragmentacion / Optimizacion</h3><table><tr><th>Drive</th><th>FS</th><th>Media</th><th>Health</th><th>Frag %</th><th>NeedsDefrag</th></tr>"
+    $null = $sb.Append("<h3>Fragmentacion / Optimizacion</h3><table><tr><th>Drive</th><th>FS</th><th>Media</th><th>Health</th><th>Frag %</th><th>NeedsDefrag</th></tr>")
     foreach ($f in $Report.DiskAdvanced.Fragmentation) {
-        $html += "<tr><td>$($f.Drive)</td><td>$($f.FileSystem)</td><td>$($f.MediaType)</td><td>$($f.HealthStatus)</td><td>$($f.FragmentationPercent)</td><td>$($f.NeedsDefrag)</td></tr>"
+        $null = $sb.Append("<tr><td>$($f.Drive)</td><td>$($f.FileSystem)</td><td>$($f.MediaType)</td><td>$($f.HealthStatus)</td><td>$($f.FragmentationPercent)</td><td>$($f.NeedsDefrag)</td></tr>")
     }
-    $html += "</table>"
+    $null = $sb.Append("</table>")
 
-    $html += "<h3>CHKDSK scan</h3><table><tr><th>Drive</th><th>Status</th></tr>"
+    $null = $sb.Append("<h3>CHKDSK scan</h3><table><tr><th>Drive</th><th>Status</th></tr>")
     foreach ($c in $Report.DiskAdvanced.Chkdsk) {
-        $html += "<tr><td>$($c.Drive)</td><td>$($c.Status)</td></tr>"
+        $null = $sb.Append("<tr><td>$($c.Drive)</td><td>$($c.Status)</td></tr>")
     }
-    $html += "</table>"
+    $null = $sb.Append("</table>")
 
-    $html += "<h3>BitLocker</h3><table><tr><th>MountPoint</th><th>Status</th><th>Protection</th><th>Method</th><th>%</th></tr>"
+    $null = $sb.Append("<h3>BitLocker</h3><table><tr><th>MountPoint</th><th>Status</th><th>Protection</th><th>Method</th><th>%</th></tr>")
     foreach ($b in $Report.DiskAdvanced.BitLocker) {
-        $html += "<tr><td>$($b.MountPoint)</td><td>$($b.VolumeStatus)</td><td>$($b.ProtectionStatus)</td><td>$($b.EncryptionMethod)</td><td>$($b.EncryptionPercentage)</td></tr>"
+        $null = $sb.Append("<tr><td>$($b.MountPoint)</td><td>$($b.VolumeStatus)</td><td>$($b.ProtectionStatus)</td><td>$($b.EncryptionMethod)</td><td>$($b.EncryptionPercentage)</td></tr>")
     }
-    $html += "</table></div>"
+    $null = $sb.Append("</table></div>")
 
-    $html += "<div class='card'><h2>Hallazgos</h2><table><tr><th>Severidad</th><th>Area</th><th>Penalidad</th><th>Mensaje</th></tr>"
+    $null = $sb.Append("<div class='card'><h2>Hallazgos</h2><table><tr><th>Severidad</th><th>Area</th><th>Penalidad</th><th>Mensaje</th></tr>")
     foreach ($h in $Report.Score.Hallazgos) {
-        $html += "<tr><td class='finding-$($h.Severidad)'>$($h.Severidad)</td><td>$($h.Area)</td><td>-$($h.Penalidad)</td><td>$(Html-Encode $h.Mensaje)</td></tr>"
+        $null = $sb.Append("<tr><td class='finding-$($h.Severidad)'>$($h.Severidad)</td><td>$($h.Area)</td><td>-$($h.Penalidad)</td><td>$(Html-Encode $h.Mensaje)</td></tr>")
     }
-    if ($Report.Score.Hallazgos.Count -eq 0) { $html += "<tr><td colspan='4'>Sin hallazgos negativos relevantes.</td></tr>" }
-    $html += "</table></div>"
+    if ($Report.Score.Hallazgos.Count -eq 0) { $null = $sb.Append("<tr><td colspan='4'>Sin hallazgos negativos relevantes.</td></tr>") }
+    $null = $sb.Append("</table></div>")
 
-    $html += "<div class='card'><h2>Recomendaciones</h2><ul>"
-    foreach ($r in $Report.Recommendations) { $html += "<li>$(Html-Encode $r)</li>" }
-    $html += "</ul></div>"
+    $null = $sb.Append("<div class='card'><h2>Recomendaciones</h2><ul>")
+    foreach ($r in $Report.Recommendations) { $null = $sb.Append("<li>$(Html-Encode $r)</li>") }
+    $null = $sb.Append("</ul></div>")
 
-    $html += "<div class='card'><h2>Top procesos por CPU</h2><table><tr><th>Proceso</th><th>PID</th><th>CPU s</th><th>RAM MB</th><th>Ruta</th></tr>"
+    $null = $sb.Append("<div class='card'><h2>Top procesos por CPU</h2><table><tr><th>Proceso</th><th>PID</th><th>CPU s</th><th>RAM MB</th><th>Ruta</th></tr>")
     foreach ($p in $Report.Processes.TopCPU) {
-        $html += "<tr><td>$(Html-Encode $p.Name)</td><td>$($p.Id)</td><td>$($p.CPUSeconds)</td><td>$($p.RAMMB)</td><td>$(Html-Encode $p.Path)</td></tr>"
+        $null = $sb.Append("<tr><td>$(Html-Encode $p.Name)</td><td>$($p.Id)</td><td>$($p.CPUSeconds)</td><td>$($p.RAMMB)</td><td>$(Html-Encode $p.Path)</td></tr>")
     }
-    $html += "</table></div>"
+    $null = $sb.Append("</table></div>")
 
-    $html += "<div class='card'><h2>Eventos relevantes detectados</h2>"
-    $html += "<p>Total eventos relevantes: <strong>$($Report.Events.TotalEventos)</strong> en los ultimos $($Report.Events.DiasAnalizados) dias.</p>"
-    $html += "<h3>Resumen por origen y nivel</h3><table><tr><th>Provider / Nivel</th><th>Cantidad</th></tr>"
+    $null = $sb.Append("<div class='card'><h2>Eventos relevantes detectados</h2>")
+    $null = $sb.Append("<p>Total eventos relevantes: <strong>$($Report.Events.TotalEventos)</strong> en los ultimos $($Report.Events.DiasAnalizados) dias.</p>")
+    $null = $sb.Append("<h3>Resumen por origen y nivel</h3><table><tr><th>Provider / Nivel</th><th>Cantidad</th></tr>")
     try {
         $groups = @($Report.Events.Eventos | Group-Object Provider,Nivel | Sort-Object Count -Descending)
         foreach ($g in $groups) {
-            $html += "<tr><td>$(Html-Encode $g.Name)</td><td>$($g.Count)</td></tr>"
+            $null = $sb.Append("<tr><td>$(Html-Encode $g.Name)</td><td>$($g.Count)</td></tr>")
         }
-    } catch {}
-    $html += "</table>"
-    $html += "<h3>Detalle ultimos eventos</h3><table><tr><th>Fecha</th><th>Nivel</th><th>Provider</th><th>ID</th><th>Mensaje</th></tr>"
+    } catch { Write-Debug "Error agrupando eventos: $($_.Exception.Message)" }
+    $null = $sb.Append("</table>")
+    $null = $sb.Append("<h3>Detalle ultimos eventos</h3><table><tr><th>Fecha</th><th>Nivel</th><th>Provider</th><th>ID</th><th>Mensaje</th></tr>")
     foreach ($e in ($Report.Events.Eventos | Select-Object -First 80)) {
-        $html += "<tr><td>$($e.Fecha)</td><td>$($e.Nivel)</td><td>$(Html-Encode $e.Provider)</td><td>$($e.Id)</td><td>$(Html-Encode $e.Mensaje)</td></tr>"
+        $null = $sb.Append("<tr><td>$($e.Fecha)</td><td>$($e.Nivel)</td><td>$(Html-Encode $e.Provider)</td><td>$($e.Id)</td><td>$(Html-Encode $e.Mensaje)</td></tr>")
     }
     if ($Report.Events.Eventos.Count -eq 0) {
-        $html += "<tr><td colspan='5'>Sin eventos relevantes detectados.</td></tr>"
+        $null = $sb.Append("<tr><td colspan='5'>Sin eventos relevantes detectados.</td></tr>")
     }
-    $html += "</table></div>"
+    $null = $sb.Append("</table></div>")
 
-    $html += "<div class='card'><h2>Muestras de temperatura y carga</h2><table><tr><th>Fase</th><th>Fecha</th><th>CPU %</th><th>RAM %</th><th>Temp Max C</th><th>Disk Time %</th></tr>"
+    $null = $sb.Append("<div class='card'><h2>Muestras de temperatura y carga</h2><table><tr><th>Fase</th><th>Fecha</th><th>CPU %</th><th>RAM %</th><th>Temp Max C</th><th>Disk Time %</th></tr>")
     $allSamples = @()
     $allSamples += $Report.Reposo.Samples
     $allSamples += $Report.Benchmark.Phase.Samples
     foreach ($s in $allSamples) {
-        $html += "<tr><td>$($s.Fase)</td><td>$($s.Fecha)</td><td>$($s.CPUPercent)</td><td>$($s.RAMUsedPercent)</td><td>$($s.TempMaxC)</td><td>$($s.DiskTimePercent)</td></tr>"
+        $null = $sb.Append("<tr><td>$($s.Fase)</td><td>$($s.Fecha)</td><td>$($s.CPUPercent)</td><td>$($s.RAMUsedPercent)</td><td>$($s.TempMaxC)</td><td>$($s.DiskTimePercent)</td></tr>")
     }
-    $html += "</table></div>"
-
-    $html += "</div></body></html>"
-    return $html
+    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</div></body></html>")
+    return $sb.ToString()
 }
 
 Write-Host "================================================" -ForegroundColor Cyan
@@ -2332,6 +2388,7 @@ if (!(Test-Path $RutaSalida)) {
 }
 
 $runFolder = New-RunFolder -Root $RutaSalida -Cliente $Cliente -OrdenTrabajo $OrdenTrabajo -Modo $Modo
+$script:LogPath = Join-Path $runFolder "debug.log"
 Write-Info "Carpeta de reporte: $runFolder"
 
 $advancedTemp = $false
@@ -2364,7 +2421,7 @@ if ($UseSmartCtl.IsPresent) {
     $smart = @(Get-SmartCtlInfo -SmartCtlPath $SmartCtlPath)
 } else {
     $smart = @()
-    $smart += New-Object PSObject -Property @{
+    $smart += [PSCustomObject]@{
         Device = "smartctl"
         Available = $false
         Health = $null
@@ -2381,7 +2438,7 @@ $security = Get-SecurityInfo
 $score = Get-Score -Reposo $reposo -Benchmark $benchmark -Disks $disks -DiskAdvanced $diskAdvanced -TempsFinal $tempsFinal -Smart $smart -Startup $startup -Events $events -Security $security
 $recommendations = Get-Recommendations -Reposo $reposo -Benchmark $benchmark -Disks $disks -Smart $smart -Startup $startup -Events $events
 
-$metadata = New-Object PSObject -Property @{
+$metadata = [PSCustomObject]@{
     Modo = $Modo
     Cliente = $Cliente
     OrdenTrabajo = $OrdenTrabajo
@@ -2400,7 +2457,7 @@ $metadata = New-Object PSObject -Property @{
     SmartCtlPath = $SmartCtlPath
 }
 
-$report = New-Object PSObject -Property @{
+$report = [PSCustomObject]@{
     Metadata = $metadata
     System = $system
     Reposo = $reposo
