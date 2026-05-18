@@ -970,52 +970,6 @@ function Measure-Phase {
     return $result
 }
 
-    $cpuVals = @()
-    $ramVals = @()
-    $tempVals = @()
-
-    foreach ($s in $samples) {
-        if ($s.CPUPercent -ne $null) { $cpuVals += [double]$s.CPUPercent }
-        if ($s.RAMUsedPercent -ne $null) { $ramVals += [double]$s.RAMUsedPercent }
-        if ($s.TempMaxC -ne $null) { $tempVals += [double]$s.TempMaxC }
-    }
-
-    $cpuAvg = $null
-    $cpuMax = $null
-    $ramAvg = $null
-    $ramMax = $null
-    $tempAvg = $null
-    $tempMax = $null
-
-    if ($cpuVals.Count -gt 0) {
-        $cpuAvg = [math]::Round(($cpuVals | Measure-Object -Average).Average, 2)
-        $cpuMax = [math]::Round(($cpuVals | Measure-Object -Maximum).Maximum, 2)
-    }
-
-    if ($ramVals.Count -gt 0) {
-        $ramAvg = [math]::Round(($ramVals | Measure-Object -Average).Average, 2)
-        $ramMax = [math]::Round(($ramVals | Measure-Object -Maximum).Maximum, 2)
-    }
-
-    if ($tempVals.Count -gt 0) {
-        $tempAvg = [math]::Round(($tempVals | Measure-Object -Average).Average, 1)
-        $tempMax = [math]::Round(($tempVals | Measure-Object -Maximum).Maximum, 1)
-    }
-
-    return [PSCustomObject]@{
-        Fase = $Phase
-        DuracionSegundos = $Seconds
-        IntervaloSegundos = $Interval
-        Samples = $samples
-        CPUAveragePct = $cpuAvg
-        CPUMaxPct = $cpuMax
-        RAMAveragePct = $ramAvg
-        RAMMaxPct = $ramMax
-        TempAverageC = $tempAvg
-        TempMaxC = $tempMax
-    }
-}
-
 function Start-CpuStressJobs {
     param([int]$Workers,[int]$Seconds)
 
