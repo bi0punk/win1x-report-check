@@ -1,5 +1,4 @@
-﻿[CmdletBinding()]
-param(
+﻿[CmdletBinding()]param(
     [Parameter(Mandatory=$true)]
     [ValidateSet("Antes","Despues")]
     [string]$Modo,
@@ -870,6 +869,21 @@ function Get-CurrentMetrics {
     }
 }
 
+function Write-PhaseConsoleSummary {
+    param(
+        [string]$Phase,
+        $PhaseData
+    )
+
+    Write-Host "================================================" -ForegroundColor DarkGray
+    Write-Host "Resumen fase $Phase" -ForegroundColor Cyan
+    Write-Host "CPU promedio: $($PhaseData.CPUAveragePct)% | CPU max: $($PhaseData.CPUMaxPct)%"
+    Write-Host "RAM promedio: $($PhaseData.RAMAveragePct)% | RAM max: $($PhaseData.RAMMaxPct)%"
+    Write-Host "Temp promedio: $($PhaseData.TempAverageC) C | Temp max: $($PhaseData.TempMaxC) C"
+    Write-Host "Muestras tomadas: $($PhaseData.Samples.Count) | Duracion: $($PhaseData.DuracionSegundos) s"
+    Write-Host "================================================" -ForegroundColor DarkGray
+}
+
 function Measure-Phase {
     param(
         [string]$Phase,
@@ -882,20 +896,79 @@ function Measure-Phase {
     Write-Info "Fase $Phase durante $Seconds segundos. Muestreo cada $Interval segundos."
 
     $samples = @()
-    $end = (Get-Date).AddSeconds($Seconds)
+    $start = Get-Date
+    $end = $start.AddSeconds($Seconds)
 
     while ((Get-Date) -lt $end) {
         $sample = Get-CurrentMetrics -AdvancedTemp $AdvancedTemp -LhmDll $LhmDll
         $sample | Add-Member -MemberType NoteProperty -Name Fase -Value $Phase -Force
         $samples += $sample
 
-        $cpuText = $sample.CPUPercent
-        $ramText = $sample.RAMUsedPercent
-        $tempText = $sample.TempMaxC
+        $cpuText = if ($sample.CPUPercent -ne $null) { $sample.CPUPercent } else { "N/D" }
+        $ramText = if ($sample.RAMUsedPercent -ne $null) { $sample.RAMUsedPercent } else { "N/D" }
+        $tempText = if ($sample.TempMaxC -ne $null) { $sample.TempMaxC } else { "N/D" }
+
+        $elapsed = (Get-Date) - $start
+        $percent = [math]::Round((($elapsed.TotalSeconds / $Seconds) * 100), 0)
+        if ($percent -gt 100) { $percent = 100 }
+        if ($percent -lt 0) { $percent = 0 }
+
+        Write-Progress -Activity "Fase $Phase" -Status "CPU $cpuText% | RAM $ramText% | Temp $tempText C" -PercentComplete $percent
         Write-Host ("[{0}] CPU={1}% RAM={2}% TempMax={3}C" -f $Phase,$cpuText,$ramText,$tempText)
 
         Start-Sleep -Seconds $Interval
     }
+
+    Write-Progress -Activity "Fase $Phase" -Completed | Out-Null
+
+    $cpuVals = @()
+    $ramVals = @()
+    $tempVals = @()
+
+    foreach ($s in $samples) {
+        if ($s.CPUPercent -ne $null) { $cpuVals += [double]$s.CPUPercent }
+        if ($s.RAMUsedPercent -ne $null) { $ramVals += [double]$s.RAMUsedPercent }
+        if ($s.TempMaxC -ne $null) { $tempVals += [double]$s.TempMaxC }
+    }
+
+    $cpuAvg = $null
+    $cpuMax = $null
+    $ramAvg = $null
+    $ramMax = $null
+    $tempAvg = $null
+    $tempMax = $null
+
+    if ($cpuVals.Count -gt 0) {
+        $cpuAvg = [math]::Round(($cpuVals | Measure-Object -Average).Average, 2)
+        $cpuMax = [math]::Round(($cpuVals | Measure-Object -Maximum).Maximum, 2)
+    }
+
+    if ($ramVals.Count -gt 0) {
+        $ramAvg = [math]::Round(($ramVals | Measure-Object -Average).Average, 2)
+        $ramMax = [math]::Round(($ramVals | Measure-Object -Maximum).Maximum, 2)
+    }
+
+    if ($tempVals.Count -gt 0) {
+        $tempAvg = [math]::Round(($tempVals | Measure-Object -Average).Average, 1)
+        $tempMax = [math]::Round(($tempVals | Measure-Object -Maximum).Maximum, 1)
+    }
+
+    $result = [PSCustomObject]@{
+        Fase = $Phase
+        DuracionSegundos = $Seconds
+        IntervaloSegundos = $Interval
+        Samples = $samples
+        CPUAveragePct = $cpuAvg
+        CPUMaxPct = $cpuMax
+        RAMAveragePct = $ramAvg
+        RAMMaxPct = $ramMax
+        TempAverageC = $tempAvg
+        TempMaxC = $tempMax
+    }
+
+    Write-PhaseConsoleSummary -Phase $Phase -PhaseData $result
+    return $result
+}
 
     $cpuVals = @()
     $ramVals = @()
@@ -951,20 +1024,28 @@ function Start-CpuStressJobs {
 
     Write-Info "Iniciando carga CPU controlada: $Workers workers por $Seconds segundos"
 
+    $opsPerLoop = 50000
+
     for ($i = 1; $i -le $Workers; $i++) {
         $job = Start-Job -ScriptBlock {
-            param($Duration)
+            param($Duration,$OpsPerLoop)
             $end = (Get-Date).AddSeconds($Duration)
             $x = 0.0
             $iterations = 0
+            $watch = [System.Diagnostics.Stopwatch]::StartNew()
             while ((Get-Date) -lt $end) {
-                for ($j = 1; $j -le 50000; $j++) {
+                for ($j = 1; $j -le $OpsPerLoop; $j++) {
                     $x += [Math]::Sqrt($j) * [Math]::Sin($j)
                 }
                 $iterations++
             }
-            return $iterations
-        } -ArgumentList $Seconds
+            $watch.Stop()
+            return [PSCustomObject]@{
+                Iterations = $iterations
+                Operations = $iterations * $OpsPerLoop
+                DurationMs = $watch.ElapsedMilliseconds
+            }
+        } -ArgumentList $Seconds,$opsPerLoop
         $jobs += $job
     }
 
@@ -1022,6 +1103,239 @@ function Start-DiskStressJob {
     return $job
 }
 
+function Get-NormalizedCpuScore {
+    param(
+        [double]$OpsPerSecond,
+        [int]$Workers
+    )
+
+    if ($OpsPerSecond -eq $null -or $Workers -lt 1) { return $null }
+    $baselinePerWorker = 1800000
+    $target = $baselinePerWorker * $Workers
+    if ($target -le 0) { return $null }
+    $score = (($OpsPerSecond / $target) * 100)
+    $score = [math]::Max(0, [math]::Min(150, [math]::Round($score, 2)))
+    if ($score -lt 5) { $score = 5 }
+    return $score
+}
+
+function Invoke-RamBenchmark {
+    param(
+        [int]$DurationSeconds = 10,
+        [int]$ChunkMB = 16
+    )
+
+    $duration = [math]::Max(5, $DurationSeconds)
+    $chunk = [math]::Max(4, $ChunkMB)
+    if ($chunk -gt 128) { $chunk = 128 }
+    $buffer = New-Object byte[] ($chunk * 1MB)
+    $rand = New-Object Random
+    $writeOps = 0
+    $readOps = 0
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+
+    while ($watch.Elapsed.TotalSeconds -lt $duration) {
+        $rand.NextBytes($buffer)
+        $writeOps++
+        $sum = 0
+        for ($i = 0; $i -lt $buffer.Length; $i += 4096) {
+            $sum += $buffer[$i]
+        }
+        $readOps++
+    }
+
+    $watch.Stop()
+    $totalSeconds = $watch.Elapsed.TotalSeconds
+    $writeMBs = $null
+    $readMBs = $null
+    if ($totalSeconds -gt 0) {
+        $writeMBs = [math]::Round(($chunk * $writeOps) / $totalSeconds, 2)
+        $readMBs = [math]::Round(($chunk * $readOps) / $totalSeconds, 2)
+    }
+
+    $avgMBs = $null
+    if (($writeMBs -ne $null) -and ($readMBs -ne $null)) { $avgMBs = [math]::Round((($writeMBs + $readMBs) / 2), 2) }
+
+    return [PSCustomObject]@{
+        DurationSeconds = [math]::Round($totalSeconds, 2)
+        ChunkMB = $chunk
+        WriteOps = $writeOps
+        ReadOps = $readOps
+        WriteMBs = $writeMBs
+        ReadMBs = $readMBs
+        AvgMBs = $avgMBs
+        RamScore = Get-NormalizedRamScore -WriteMBs $writeMBs -ReadMBs $readMBs
+    }
+}
+
+function Get-NormalizedRamScore {
+    param(
+        [double]$WriteMBs,
+        [double]$ReadMBs
+    )
+
+    $avg = $null
+    if (($WriteMBs -ne $null) -and ($ReadMBs -ne $null)) { $avg = ($WriteMBs + $ReadMBs) / 2 }
+    elseif ($WriteMBs -ne $null) { $avg = $WriteMBs }
+    elseif ($ReadMBs -ne $null) { $avg = $ReadMBs }
+    if ($avg -eq $null) { return $null }
+
+    $target = 18000
+    if ($target -le 0) { return $null }
+    $score = (($avg / $target) * 100)
+    $score = [math]::Max(0, [math]::Min(150, [math]::Round($score, 2)))
+    if ($score -lt 5) { $score = 5 }
+    return $score
+}
+
+function Invoke-Disk4KIOTest {
+    param(
+        [string]$Folder,
+        [int]$Seconds,
+        [int]$FileMB
+    )
+
+    $duration = [math]::Max(5, [math]::Min(30, $Seconds))
+    $fileMB = [math]::Max(16, $FileMB)
+    $filePath = Join-Path $Folder "disk_4k_test.bin"
+    $chunk = 4 * 1KB
+    $fileSize = $fileMB * 1MB
+
+    try {
+        $init = [IO.File]::Open($filePath, [IO.FileMode]::Create, [IO.FileAccess]::ReadWrite)
+        $init.SetLength($fileSize)
+        $init.Close()
+    } catch {
+        Write-Debug "No se pudo preparar archivo 4K: $($_.Exception.Message)"
+        return $null
+    }
+
+    $buffer = New-Object byte[] $chunk
+    $rand = New-Object Random
+    $writeOps = 0
+    $readOps = 0
+    $watch = [System.Diagnostics.Stopwatch]::StartNew()
+    $fs = [IO.File]::Open($filePath, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+
+    try {
+        while ($watch.Elapsed.TotalSeconds -lt $duration) {
+            $offset = $rand.Next(0, [int]($fileSize - $chunk))
+            $fs.Seek($offset, [IO.SeekOrigin]::Begin) | Out-Null
+            $fs.Write($buffer, 0, $buffer.Length)
+            $writeOps++
+
+            $offset = $rand.Next(0, [int]($fileSize - $chunk))
+            $fs.Seek($offset, [IO.SeekOrigin]::Begin) | Out-Null
+            $fs.Read($buffer, 0, $buffer.Length) | Out-Null
+            $readOps++
+        }
+    } catch {
+        Write-Debug "Error 4K IO: $($_.Exception.Message)"
+    } finally {
+        $fs.Close()
+    }
+
+    $watch.Stop()
+    $durationSec = $watch.Elapsed.TotalSeconds
+    $writeIOPS = $null
+    $readIOPS = $null
+    if ($durationSec -gt 0) {
+        $writeIOPS = [math]::Round($writeOps / $durationSec, 2)
+        $readIOPS = [math]::Round($readOps / $durationSec, 2)
+    }
+
+    try { Remove-Item $filePath -Force -ErrorAction SilentlyContinue } catch {}
+
+    return [PSCustomObject]@{
+        DurationSeconds = [math]::Round($durationSec, 2)
+        FileMB = $fileMB
+        ReadIOPS = $readIOPS
+        WriteIOPS = $writeIOPS
+        IOScore = Get-NormalizedDiskIOPSScore -ReadIOPS $readIOPS -WriteIOPS $writeIOPS
+    }
+}
+
+function Get-NormalizedDiskIOPSScore {
+    param(
+        [double]$ReadIOPS,
+        [double]$WriteIOPS
+    )
+
+    $avg = $null
+    if (($ReadIOPS -ne $null) -and ($WriteIOPS -ne $null)) { $avg = ($ReadIOPS + $WriteIOPS) / 2 }
+    elseif ($ReadIOPS -ne $null) { $avg = $ReadIOPS }
+    elseif ($WriteIOPS -ne $null) { $avg = $WriteIOPS }
+    if ($avg -eq $null) { return $null }
+
+    $targetIOPS = 2000
+    if ($targetIOPS -le 0) { return $null }
+    $score = (($avg / $targetIOPS) * 100)
+    $score = [math]::Max(0, [math]::Min(150, [math]::Round($score, 2)))
+    if ($score -lt 5) { $score = 5 }
+    return $score
+}
+
+function Invoke-NetworkTest {
+    param(
+        [int]$PingCount = 3,
+        [string[]]$Targets = @('1.1.1.1','8.8.8.8','www.google.com')
+    )
+
+    $results = @()
+    foreach ($target in $Targets) {
+        $avg = $null; $max = $null; $min = $null; $successRate = 0
+        try {
+            $ping = Test-Connection -ComputerName $target -Count $PingCount -ErrorAction Stop
+            $latencies = @($ping | ForEach-Object { $_.ResponseTime })
+            if ($latencies.Count -gt 0) {
+                $avg = [math]::Round(($latencies | Measure-Object -Average).Average, 2)
+                $max = ($latencies | Measure-Object -Maximum).Maximum
+                $min = ($latencies | Measure-Object -Minimum).Minimum
+                $successRate = [math]::Round((($latencies.Count / $PingCount) * 100), 2)
+            }
+        } catch { }
+
+        $tcp = $null
+        $tcpSuccess = $false
+        try {
+            $tcp = Test-NetConnection -ComputerName $target -Port 53 -WarningAction SilentlyContinue
+            if ($tcp -ne $null) { $tcpSuccess = $tcp.TcpTestSucceeded }
+        } catch { }
+
+        $results += [PSCustomObject]@{
+            Target = $target
+            AvgLatencyMs = $avg
+            MinLatencyMs = $min
+            MaxLatencyMs = $max
+            SuccessRatePct = $successRate
+            DnsPort53 = $tcpSuccess
+        }
+    }
+
+    return $results
+}
+
+function Get-SampleTimelineData {
+    param([PSCustomObject]$Report)
+
+    $samples = @()
+    if ($Report -ne $null) {
+        $samples += $Report.Reposo.Samples
+        $samples += $Report.Benchmark.Phase.Samples
+    }
+    $timeline = @()
+    foreach ($s in ($samples | Sort-Object Fecha)) {
+        $timeline += [PSCustomObject]@{
+            Label = $s.Fecha.ToString('HH:mm:ss')
+            Phase = $s.Fase
+            CPU = if ($s.CPUPercent -ne $null) { $s.CPUPercent } else { 0 }
+            RAM = if ($s.RAMUsedPercent -ne $null) { $s.RAMUsedPercent } else { 0 }
+            Temp = if ($s.TempMaxC -ne $null) { $s.TempMaxC } else { 0 }
+        }
+    }
+    return $timeline
+}
+
 function Invoke-SeriousBenchmark {
     param(
         [string]$Folder,
@@ -1061,11 +1375,18 @@ function Invoke-SeriousBenchmark {
     Wait-Job $diskJob -Timeout 15 | Out-Null
 
     $cpuIterations = 0
+    $totalOps = 0
+    $maxDurationMs = 0
+
     foreach ($j in $cpuJobs) {
         try {
             $r = Receive-Job $j -ErrorAction SilentlyContinue
             foreach ($item in $r) {
-                if ($item -ne $null) { $cpuIterations += [int]$item }
+                if ($item -ne $null) {
+                    if ($item.Iterations -ne $null) { $cpuIterations += [int]$item.Iterations }
+                    if ($item.Operations -ne $null) { $totalOps += [double]$item.Operations }
+                    if ($item.DurationMs -ne $null) { $maxDurationMs = [math]::Max($maxDurationMs, [double]$item.DurationMs) }
+                }
             }
         } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
         Remove-Job $j -Force -ErrorAction SilentlyContinue
@@ -1094,16 +1415,28 @@ function Invoke-SeriousBenchmark {
         $readMBs = [math]::Round($readMB / $Duration, 2)
     }
 
+    $disk4k = Invoke-Disk4KIOTest -Folder $Folder -Seconds $Duration -FileMB ($DiskFileMB / 4)
+
+    $durationSec = [double]$Duration
+    if ($maxDurationMs -gt 0) { $durationSec = [math]::Max($durationSec, ($maxDurationMs / 1000)) }
+    $cpuOpsPerSecond = $null
+    if ($durationSec -gt 0) { $cpuOpsPerSecond = [math]::Round($totalOps / $durationSec, 2) }
+    $cpuScore = Get-NormalizedCpuScore -OpsPerSecond $cpuOpsPerSecond -Workers $workers
+
     return [PSCustomObject]@{
         Phase = $phase
         CpuWorkers = $workers
         CpuIterations = $cpuIterations
+        CpuOperations = $totalOps
+        CpuOpsPerSecond = $cpuOpsPerSecond
+        CpuScore = $cpuScore
         DiskFileMB = $DiskFileMB
         DiskWriteTotalMB = $writeMB
         DiskReadTotalMB = $readMB
         DiskCycles = $cycles
         DiskWriteMBs = $writeMBs
         DiskReadMBs = $readMBs
+        Disk4K = $disk4k
     }
 }
 
@@ -1854,7 +2187,7 @@ function Add-Finding {
 }
 
 function Get-Score {
-    param($Reposo,$Benchmark,$Disks,$DiskAdvanced,$TempsFinal,$Smart,$Startup,$Events,$Security)
+    param($Reposo,$Benchmark,$Disks,$DiskAdvanced,$TempsFinal,$Smart,$Startup,$Events,$Security,$RamBenchmark,$Network)
 
     $score = 100
     $findings = @()
@@ -1895,6 +2228,16 @@ function Get-Score {
         }
     }
 
+    if ($Benchmark.CpuScore -ne $null) {
+        if ($Benchmark.CpuScore -lt 40) {
+            $score -= 12
+            $findings += Add-Finding -Penalty 12 -Area "Benchmark CPU" -Severity "Critico" -Message "Puntaje CPU muy bajo: $($Benchmark.CpuScore)/100 (Ops/s $($Benchmark.CpuOpsPerSecond))."
+        } elseif ($Benchmark.CpuScore -lt 60) {
+            $score -= 6
+            $findings += Add-Finding -Penalty 6 -Area "Benchmark CPU" -Severity "Medio" -Message "Puntaje CPU moderado: $($Benchmark.CpuScore)/100."
+        }
+    }
+
     if (($Reposo.TempAverageC -ne $null) -and ($Benchmark.Phase.TempMaxC -ne $null)) {
         $deltaTemp = [math]::Round($Benchmark.Phase.TempMaxC - $Reposo.TempAverageC, 1)
         if ($deltaTemp -gt 40) {
@@ -1903,6 +2246,16 @@ function Get-Score {
         } elseif ($deltaTemp -gt 30) {
             $score -= 5
             $findings += Add-Finding -Penalty 5 -Area "Temperatura Delta" -Severity "Medio" -Message "Aumento termico moderado: +$deltaTemp C entre reposo y carga."
+        }
+    }
+
+    if ($RamBenchmark -ne $null -and $RamBenchmark.RamScore -ne $null) {
+        if ($RamBenchmark.RamScore -lt 40) {
+            $score -= 8
+            $findings += Add-Finding -Penalty 8 -Area "Benchmark RAM" -Severity "Alto" -Message "Rendimiento RAM bajo: $($RamBenchmark.RamScore)/100 (aprox. $($RamBenchmark.AvgMBs) MB/s)."
+        } elseif ($RamBenchmark.RamScore -lt 60) {
+            $score -= 4
+            $findings += Add-Finding -Penalty 4 -Area "Benchmark RAM" -Severity "Medio" -Message "Rendimiento RAM moderado: $($RamBenchmark.RamScore)/100."
         }
     }
 
@@ -1937,6 +2290,16 @@ function Get-Score {
         } elseif ($Benchmark.DiskWriteMBs -lt 70) {
             $score -= 5
             $findings += Add-Finding -Penalty 5 -Area "Benchmark Disco" -Severity "Medio" -Message "Escritura promedio baja/moderada durante prueba: $($Benchmark.DiskWriteMBs) MB/s."
+        }
+    }
+
+    if ($Benchmark.Disk4K -ne $null) {
+        if ($Benchmark.Disk4K.IOScore -lt 45) {
+            $score -= 8
+            $findings += Add-Finding -Penalty 8 -Area "Benchmark Disco" -Severity "Alto" -Message "IOPS 4K bajo: Read $($Benchmark.Disk4K.ReadIOPS) / Write $($Benchmark.Disk4K.WriteIOPS)."
+        } elseif ($Benchmark.Disk4K.IOScore -lt 70) {
+            $score -= 4
+            $findings += Add-Finding -Penalty 4 -Area "Benchmark Disco" -Severity "Medio" -Message "IOPS 4K moderado: $($Benchmark.Disk4K.IOScore)/100."
         }
     }
 
@@ -2038,6 +2401,19 @@ function Get-Score {
         $findings += Add-Finding -Penalty 5 -Area "Seguridad" -Severity "Medio" -Message "Defender sin proteccion en tiempo real."
     }
 
+    if ($Network -ne $null) {
+        foreach ($n in $Network) {
+            if ($n.SuccessRatePct -lt 60) {
+                $score -= 6
+                $findings += Add-Finding -Penalty 6 -Area "Red" -Severity "Medio" -Message "Pings a $($n.Target) con tasas bajas: $($n.SuccessRatePct)%."
+            }
+            if ($n.AvgLatencyMs -ne $null -and $n.AvgLatencyMs -gt 120) {
+                $score -= 5
+                $findings += Add-Finding -Penalty 5 -Area "Red" -Severity "Medio" -Message "Latencia elevada a $($n.Target): $($n.AvgLatencyMs) ms."
+            }
+        }
+    }
+
     if ($score -lt 0) { $score = 0 }
 
     $estado = "Critico"
@@ -2054,7 +2430,7 @@ function Get-Score {
 }
 
 function Get-Recommendations {
-    param($Reposo,$Benchmark,$Disks,$Smart,$Startup,$Events)
+    param($Reposo,$Benchmark,$Disks,$Smart,$Startup,$Events,$RamBenchmark,$Network)
     $recs = @()
 
     if ($Reposo.CPUAveragePct -gt 30) { $recs += "Revisar procesos residentes: CPU en reposo elevada ($($Reposo.CPUAveragePct)%)." }
@@ -2081,8 +2457,27 @@ function Get-Recommendations {
         }
     }
 
+    if ($RamBenchmark -ne $null) {
+        if ($RamBenchmark.AvgMBs -ne $null -and $RamBenchmark.AvgMBs -lt 6000) {
+            $recs += "Revisar configuracion de memoria: throughput promedio $($RamBenchmark.AvgMBs) MB/s."
+        }
+    }
+
+    if ($Benchmark.Disk4K -ne $null) {
+        if ($Benchmark.Disk4K.ReadIOPS -lt 800 -or $Benchmark.Disk4K.WriteIOPS -lt 600) {
+            $recs += "Revisar salud del disco: IOPS 4K bajos (R $($Benchmark.Disk4K.ReadIOPS), W $($Benchmark.Disk4K.WriteIOPS))."
+        }
+    }
+
     if ($Startup.Count -gt 20) { $recs += "Reducir programas de inicio: detectados $($Startup.Count)." }
     if ($Events.TotalEventos -gt 10) { $recs += "Revisar visor de eventos: $($Events.TotalEventos) eventos relevantes recientes." }
+
+    if ($Network -ne $null) {
+        foreach ($n in $Network) {
+            if ($n.SuccessRatePct -lt 60) { $recs += "Verificar conectividad a $($n.Target): fallan los pings ($($n.SuccessRatePct)% exitosos)." }
+            if ($n.AvgLatencyMs -ne $null -and $n.AvgLatencyMs -gt 120) { $recs += "Reducir latencia a $($n.Target): promedio $($n.AvgLatencyMs) ms." }
+        }
+    }
 
     if ($recs.Count -eq 0) { $recs += "No se detectan problemas graves automaticos. Mantener limpieza, actualizaciones y respaldo periodico." }
     return $recs
@@ -2111,6 +2506,11 @@ function Export-Tables {
     try { $Report.Events.Eventos | Export-Csv (Join-Path $Folder "eventos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     try { $Report.Events.Eventos | Group-Object Provider,Nivel | ForEach-Object { [PSCustomObject]@{ Grupo = $_.Name; Cantidad = $_.Count } } | Export-Csv (Join-Path $Folder "eventos_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
     try { $Report.Services.ListaServicios | Export-Csv (Join-Path $Folder "servicios.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.RamBenchmark | Export-Csv (Join-Path $Folder "ram_benchmark.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try {
+        if ($Report.Benchmark.Disk4K -ne $null) { @($Report.Benchmark.Disk4K) | Export-Csv (Join-Path $Folder "disco_4k.csv") -NoTypeInformation -Encoding UTF8 }
+    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Network | Export-Csv (Join-Path $Folder "network_test.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
 }
 
 function New-SummaryText {
@@ -2150,6 +2550,9 @@ function New-SummaryText {
     $lines += "- Temp maxima: $($Report.Benchmark.Phase.TempMaxC) C"
     $lines += "- Disco escritura promedio: $($Report.Benchmark.DiskWriteMBs) MB/s"
     $lines += "- Disco lectura promedio: $($Report.Benchmark.DiskReadMBs) MB/s"
+    $lines += "- Benchmark CPU ops/s: $((if ($Report.Benchmark.CpuOpsPerSecond -ne $null) { $Report.Benchmark.CpuOpsPerSecond } else { 'N/D' })) - Score: $((if ($Report.Benchmark.CpuScore -ne $null) { $Report.Benchmark.CpuScore } else { 'N/D' }))"
+    $lines += "- Benchmark RAM promedio: $((if ($Report.RamBenchmark.AvgMBs -ne $null) { $Report.RamBenchmark.AvgMBs } else { 'N/D' })) MB/s | Score: $((if ($Report.RamBenchmark.RamScore -ne $null) { $Report.RamBenchmark.RamScore } else { 'N/D' }))"
+    $lines += "- Benchmark Disco 4K: ReadIOPS=$((if ($Report.Benchmark.Disk4K -ne $null) { $Report.Benchmark.Disk4K.ReadIOPS } else { 'N/D' })) | WriteIOPS=$((if ($Report.Benchmark.Disk4K -ne $null) { $Report.Benchmark.Disk4K.WriteIOPS } else { 'N/D' })) | Score=$((if ($Report.Benchmark.Disk4K -ne $null) { $Report.Benchmark.Disk4K.IOScore } else { 'N/D' }))"
     $lines += ""
     $lines += "DISCO AVANZADO:"
     $lines += "- Temperatura maxima disco: $($Report.DiskAdvanced.MaxDiskTemperatureC) C"
@@ -2164,6 +2567,15 @@ function New-SummaryText {
     $lines += "- Total: $($Report.Events.TotalEventos) en $($Report.Events.DiasAnalizados) dias"
     foreach ($e in ($Report.Events.Eventos | Select-Object -First 10)) {
         $lines += "- $($e.Fecha) [$($e.Nivel)] $($e.Provider) ID=$($e.Id): $($e.Mensaje)"
+    }
+    $lines += ""
+    $lines += "RED:" 
+    if ($Report.Network -ne $null) {
+        foreach ($n in $Report.Network) {
+            $lines += "- $($n.Target): Latencia avg $((if ($n.AvgLatencyMs -ne $null) { $n.AvgLatencyMs } else { 'N/D' })) ms | Exito $((if ($n.SuccessRatePct -ne $null) { $n.SuccessRatePct } else { '0' }))% | DNS53 $($n.DnsPort53)"
+        }
+    } else {
+        $lines += "- No se ejecuto prueba de red."
     }
     $lines += ""
     $lines += "Hallazgos:"
@@ -2182,7 +2594,6 @@ function New-HtmlReport {
     elseif ($Report.Score.Score -ge 75) { $scoreClass = "ok" }
     elseif ($Report.Score.Score -ge 60) { $scoreClass = "warn" }
 
-
     $tempReposoMaxText = "N/D"
     $tempReposoAvgText = "N/D"
     $tempCargaMaxText = "N/D"
@@ -2193,164 +2604,288 @@ function New-HtmlReport {
     if ($Report.Benchmark.Phase.TempMaxC -ne $null) { $tempCargaMaxText = [string]$Report.Benchmark.Phase.TempMaxC }
     if ($Report.Benchmark.Phase.TempAverageC -ne $null) { $tempCargaAvgText = [string]$Report.Benchmark.Phase.TempAverageC }
 
+    $reposoCpuAvg = if ($Report.Reposo.CPUAveragePct -ne $null) { [string]::Format('{0:N2}', $Report.Reposo.CPUAveragePct) } else { 'N/D' }
+    $reposoCpuMax = if ($Report.Reposo.CPUMaxPct -ne $null) { [string]::Format('{0:N2}', $Report.Reposo.CPUMaxPct) } else { 'N/D' }
+    $reposoRamAvg = if ($Report.Reposo.RAMAveragePct -ne $null) { [string]::Format('{0:N2}', $Report.Reposo.RAMAveragePct) } else { 'N/D' }
+    $reposoTempMax = if ($Report.Reposo.TempMaxC -ne $null) { $Report.Reposo.TempMaxC } else { 'N/D' }
+    $cargaCpuAvg = if ($Report.Benchmark.Phase.CPUAveragePct -ne $null) { [string]::Format('{0:N2}', $Report.Benchmark.Phase.CPUAveragePct) } else { 'N/D' }
+    $cargaCpuMax = if ($Report.Benchmark.Phase.CPUMaxPct -ne $null) { [string]::Format('{0:N2}', $Report.Benchmark.Phase.CPUMaxPct) } else { 'N/D' }
+    $cargaRamAvg = if ($Report.Benchmark.Phase.RAMAveragePct -ne $null) { [string]::Format('{0:N2}', $Report.Benchmark.Phase.RAMAveragePct) } else { 'N/D' }
+    $cargaTempMax = if ($Report.Benchmark.Phase.TempMaxC -ne $null) { $Report.Benchmark.Phase.TempMaxC } else { 'N/D' }
+
+    $cpuScoreDisplay = "N/D"
+    if ($Report.Benchmark.CpuScore -ne $null) { $cpuScoreDisplay = "$($Report.Benchmark.CpuScore)/100" }
+    $cpuOpsDisplay = "N/D"
+    if ($Report.Benchmark.CpuOpsPerSecond -ne $null) { $cpuOpsDisplay = "$($Report.Benchmark.CpuOpsPerSecond) ops/s" }
+
+    $ramScoreDisplay = "N/D"
+    $ramThroughputDisplay = "N/D"
+    if ($Report.RamBenchmark -ne $null) {
+        if ($Report.RamBenchmark.RamScore -ne $null) { $ramScoreDisplay = "$($Report.RamBenchmark.RamScore)/100" }
+        if ($Report.RamBenchmark.AvgMBs -ne $null) { $ramThroughputDisplay = "$($Report.RamBenchmark.AvgMBs) MB/s" }
+    }
+
+    $disk4k = $Report.Benchmark.Disk4K
+    $disk4kRead = "N/D"
+    $disk4kWrite = "N/D"
+    $disk4kScore = "N/D"
+    if ($disk4k -ne $null) {
+        if ($disk4k.ReadIOPS -ne $null) { $disk4kRead = $disk4k.ReadIOPS }
+        if ($disk4k.WriteIOPS -ne $null) { $disk4kWrite = $disk4k.WriteIOPS }
+        if ($disk4k.IOScore -ne $null) { $disk4kScore = "$($disk4k.IOScore)/100" }
+    }
+
+    $networkRows = ""
+    if ($Report.Network -ne $null) {
+        foreach ($n in $Report.Network) {
+            $lat = if ($n.AvgLatencyMs -ne $null) { $n.AvgLatencyMs } else { "N/D" }
+            $success = if ($n.SuccessRatePct -ne $null) { $n.SuccessRatePct } else { "0" }
+            $networkRows += "<tr><td>$(Html-Encode $n.Target)</td><td>$lat ms</td><td>$success%</td><td>$($n.MinLatencyMs)</td><td>$($n.MaxLatencyMs)</td><td>$($n.DnsPort53)</td></tr>"
+        }
+    } else {
+        $networkRows = "<tr><td colspan='6'>No se ejecuto prueba de red.</td></tr>"
+    }
+
+    $timelineData = Get-SampleTimelineData -Report $Report
+    $timelineJson = "[]"
+    try {
+        if ($timelineData -ne $null) {
+            $timelineJson = ($timelineData | ConvertTo-Json -Compress)
+        }
+    } catch {
+        $timelineJson = "[]"
+    }
+
     $sb = [System.Text.StringBuilder]::new()
     $null = $sb.Append(@"
-<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'>
+<!DOCTYPE html><html lang='es' data-bs-theme='dark'><head><meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
 <title>Reporte Rendimiento V3.6 - $(Html-Encode $Report.System.Hostname)</title>
+<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css' rel='stylesheet'>
 <style>
-body{font-family:Segoe UI,Arial,sans-serif;background:#f4f6f8;color:#222;margin:0;padding:24px}
-.container{max-width:1200px;margin:auto}.header{background:#111827;color:white;padding:24px;border-radius:14px;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:white;padding:18px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08);margin-bottom:16px}
-.metric{font-size:28px;font-weight:700}.label{color:#6b7280;font-size:13px}.good{color:#047857}.ok{color:#2563eb}.warn{color:#b45309}.bad{color:#b91c1c}
-table{width:100%;border-collapse:collapse;margin-top:8px}th{background:#e5e7eb;text-align:left;padding:8px;font-size:13px}td{border-bottom:1px solid #e5e7eb;padding:8px;font-size:13px;vertical-align:top}
-.badge{display:inline-block;padding:4px 8px;border-radius:999px;background:#e5e7eb;font-size:12px}.finding-Critico{color:#991b1b;font-weight:700}.finding-Alto{color:#b45309;font-weight:700}
-@media print{body{background:white}.card{box-shadow:none;border:1px solid #ddd}}
-</style></head><body><div class='container'>
-
+body{background:#0f172a}
+.gradient-header{background:linear-gradient(120deg,#0ea5e9,#6366f1)}
+.card{background:#1e293b;border-color:rgba(148,163,184,.15)}
+.metric{font-size:2rem;font-weight:700;line-height:1.1}
+.label{color:#94a3b8;font-size:.8rem}
+.good{color:#a3e635}.ok{color:#34d399}.warn{color:#fbbf24}.bad{color:#f87171}
+.finding-Critico{color:#f87171;font-weight:700}
+.finding-Alto{color:#fbbf24;font-weight:700}
+.finding-Media{color:#94a3b8}
+.finding-Medio{color:#94a3b8}
+.list-bullet{list-style:none;padding-left:0}
+.list-bullet li::before{content:"\2022";color:#0ea5e9;font-weight:700;display:inline-block;width:1em;margin-left:-1em}
+canvas{max-height:280px}
+</style></head><body><div class='container py-4'>
 "@)
 
     $null = $sb.Append(@"
-<div class='header'><h1>Reporte de Rendimiento V3.6 - Servicio Tecnico</h1>
-<p>Modo: <strong>$(Html-Encode $Report.Metadata.Modo)</strong> | Cliente: <strong>$(Html-Encode $Report.Metadata.Cliente)</strong> | OT: <strong>$(Html-Encode $Report.Metadata.OrdenTrabajo)</strong></p>
-<p>Tecnico: $(Html-Encode $Report.Metadata.Tecnico) | Fecha: $($Report.Metadata.Fecha)</p></div>
-
-<div class='grid'>
-<div class='card'><div class='label'>Score</div><div class='metric $scoreClass'>$($Report.Score.Score)/100</div><div class='badge'>$($Report.Score.Estado)</div></div>
-<div class='card'><div class='label'>Temp max reposo</div><div class='metric'>$tempReposoMaxText C</div><div class='label'>Prom: $tempReposoAvgText C</div></div>
-<div class='card'><div class='label'>Temp max carga</div><div class='metric'>$tempCargaMaxText C</div><div class='label'>Prom: $tempCargaAvgText C</div></div>
-<div class='card'><div class='label'>Duracion prueba</div><div class='metric'>$($Report.Metadata.DuracionTotalSeg)s</div><div class='label'>Reposo + carga</div></div>
+<div class='gradient-header text-white rounded-4 p-4 mb-4 shadow-lg'>
+<h1 class='mb-1 fw-bold'>Reporte de Rendimiento V3.6</h1>
+<p class='mb-0'>Modo: <strong>$(Html-Encode $Report.Metadata.Modo)</strong> | Cliente: <strong>$(Html-Encode $Report.Metadata.Cliente)</strong> | OT: <strong>$(Html-Encode $Report.Metadata.OrdenTrabajo)</strong></p>
+<p class='mb-0 mt-1'>Tecnico: $(Html-Encode $Report.Metadata.Tecnico) | Fecha: $($Report.Metadata.Fecha)</p>
 </div>
 
+<div class='row g-3 mb-4'>
+<div class='col-md-3'><div class='card h-100 border-0 shadow-sm'><div class='card-body text-center'><div class='label'>Score general</div><p class='metric $scoreClass mb-0'>$($Report.Score.Score)/100</p><span class='badge bg-secondary mt-2'>$($Report.Score.Estado)</span></div></div></div>
+<div class='col-md-3'><div class='card h-100 border-0 shadow-sm'><div class='card-body text-center'><div class='label'>Temp max reposo</div><p class='metric good mb-0'>$tempReposoMaxText &deg;C</p><div class='label mt-1'>Prom: $tempReposoAvgText &deg;C</div></div></div></div>
+<div class='col-md-3'><div class='card h-100 border-0 shadow-sm'><div class='card-body text-center'><div class='label'>Temp max carga</div><p class='metric warn mb-0'>$tempCargaMaxText &deg;C</p><div class='label mt-1'>Prom: $tempCargaAvgText &deg;C</div></div></div></div>
+<div class='col-md-3'><div class='card h-100 border-0 shadow-sm'><div class='card-body text-center'><div class='label'>Duracion total</div><p class='metric mb-0'>$($Report.Metadata.DuracionTotalSeg)s</p><div class='label mt-1'>Reposo + carga</div></div></div></div>
+</div>
 "@)
 
     $null = $sb.Append(@"
-<div class='card'><h2>Resumen reposo vs carga</h2><table>
-<tr><th>Metrica</th><th>Reposo</th><th>Carga</th></tr>
-<tr><td>Duracion</td><td>$($Report.Reposo.DuracionSegundos) s</td><td>$($Report.Benchmark.Phase.DuracionSegundos) s</td></tr>
-<tr><td>CPU promedio</td><td>$($Report.Reposo.CPUAveragePct)%</td><td>$($Report.Benchmark.Phase.CPUAveragePct)%</td></tr>
-<tr><td>CPU maximo</td><td>$($Report.Reposo.CPUMaxPct)%</td><td>$($Report.Benchmark.Phase.CPUMaxPct)%</td></tr>
-<tr><td>RAM promedio</td><td>$($Report.Reposo.RAMAveragePct)%</td><td>$($Report.Benchmark.Phase.RAMAveragePct)%</td></tr>
-<tr><td>Temperatura promedio</td><td>$($Report.Reposo.TempAverageC) C</td><td>$($Report.Benchmark.Phase.TempAverageC) C</td></tr>
-<tr><td>Temperatura maxima</td><td>$($Report.Reposo.TempMaxC) C</td><td>$($Report.Benchmark.Phase.TempMaxC) C</td></tr>
-<tr><td>Disco escritura</td><td>-</td><td>$($Report.Benchmark.DiskWriteMBs) MB/s</td></tr>
-<tr><td>Disco lectura</td><td>-</td><td>$($Report.Benchmark.DiskReadMBs) MB/s</td></tr>
-</table></div>
-
+<div class='row g-3 mb-4'>
+<div class='col-md-6'><div class='card h-100 border-0 shadow-sm'><div class='card-body'><h5 class='card-title fw-semibold text-secondary'>Fase Reposo</h5>
+<p class='mb-1'><span class='label'>Duracion:</span> $($Report.Reposo.DuracionSegundos) s</p>
+<p class='mb-1'><span class='label'>CPU promedio:</span> $reposoCpuAvg% &nbsp;|&nbsp; Max: $reposoCpuMax%</p>
+<p class='mb-1'><span class='label'>RAM promedio:</span> $reposoRamAvg%</p>
+<p class='mb-1'><span class='label'>Temp max:</span> $reposoTempMax C</p></div></div></div>
+<div class='col-md-6'><div class='card h-100 border-0 shadow-sm'><div class='card-body'><h5 class='card-title fw-semibold text-secondary'>Fase Carga</h5>
+<p class='mb-1'><span class='label'>Duracion:</span> $($Report.Benchmark.Phase.DuracionSegundos) s</p>
+<p class='mb-1'><span class='label'>CPU promedio:</span> $cargaCpuAvg% &nbsp;|&nbsp; Max: $cargaCpuMax%</p>
+<p class='mb-1'><span class='label'>RAM promedio:</span> $cargaRamAvg%</p>
+<p class='mb-1'><span class='label'>Temp max:</span> $cargaTempMax C</p></div></div></div>
+</div>
 "@)
 
     $null = $sb.Append(@"
-<div class='card'><h2>Ficha del equipo</h2><table>
-<tr><th>Campo</th><th>Valor</th></tr>
-<tr><td>Hostname</td><td>$(Html-Encode $Report.System.Hostname)</td></tr>
-<tr><td>Usuario</td><td>$(Html-Encode $Report.System.Usuario)</td></tr>
-<tr><td>Administrador</td><td>$($Report.System.EsAdministrador)</td></tr>
-<tr><td>Fabricante / Modelo</td><td>$(Html-Encode $Report.System.Fabricante) $(Html-Encode $Report.System.Modelo)</td></tr>
-<tr><td>Serial</td><td>$(Html-Encode $Report.System.Serial)</td></tr>
-<tr><td>Windows</td><td>$(Html-Encode $Report.System.Windows) $($Report.System.Version) Build $($Report.System.Build)</td></tr>
-<tr><td>CPU</td><td>$(Html-Encode $Report.System.CPU) / Cores $($Report.System.CPUCores) / Hilos $($Report.System.CPUThreads)</td></tr>
-<tr><td>RAM</td><td>$($Report.System.RAMTotalGB) GB</td></tr>
-</table></div>
-
+<div class='card border-0 shadow-sm mb-4'><div class='card-body'>
+<h5 class='card-title fw-semibold'>Benchmark Highlights</h5>
+<ul class='list-bullet mb-0'>
+<li>CPU: $cpuOpsDisplay | Score: $cpuScoreDisplay</li>
+<li>RAM: $ramThroughputDisplay | Score: $ramScoreDisplay</li>
+<li>Disco secuencial: Escritura $($Report.Benchmark.DiskWriteMBs) MB/s | Lectura $($Report.Benchmark.DiskReadMBs) MB/s</li>
+<li>Disco 4K: Read $disk4kRead IOPS | Write $disk4kWrite IOPS | Score: $disk4kScore</li>
+</ul>
+</div></div>
 "@)
 
-    $null = $sb.Append("<div class='card'><h2>Sensores temperatura finales</h2><table><tr><th>Sensor</th><th>Tipo</th><th>Temperatura C</th><th>Fuente</th></tr>")
+    $null = $sb.Append(@"
+<div class='card border-0 shadow-sm mb-4' style='background:linear-gradient(180deg,#020617,#1e293b)'><div class='card-body'>
+<h5 class='card-title fw-semibold'>Linea de carga y temperatura</h5>
+<canvas id='timelineChart'></canvas>
+</div></div>
+"@)
+
+    $null = $sb.Append(@"
+<div class='card border-0 shadow-sm mb-4'><div class='card-body'>
+<h5 class='card-title fw-semibold'>Prueba de red</h5>
+<div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'>
+<thead><tr><th>Objetivo</th><th>Promedio</th><th>Exito %</th><th>Min ms</th><th>Max ms</th><th>DNS 53</th></tr></thead>
+<tbody>$networkRows</tbody>
+</table></div></div></div>
+"@)
+
+    $null = $sb.Append(@"
+<div class='card border-0 shadow-sm mb-4'><div class='card-body'>
+<h5 class='card-title fw-semibold'>Ficha del equipo</h5>
+<div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'>
+<tbody>
+<tr><td class='text-secondary' style='width:140px'>Hostname</td><td>$(Html-Encode $Report.System.Hostname)</td></tr>
+<tr><td class='text-secondary'>Usuario</td><td>$(Html-Encode $Report.System.Usuario)</td></tr>
+<tr><td class='text-secondary'>Administrador</td><td>$($Report.System.EsAdministrador)</td></tr>
+<tr><td class='text-secondary'>Fabricante / Modelo</td><td>$(Html-Encode $Report.System.Fabricante) $(Html-Encode $Report.System.Modelo)</td></tr>
+<tr><td class='text-secondary'>Serial</td><td>$(Html-Encode $Report.System.Serial)</td></tr>
+<tr><td class='text-secondary'>Windows</td><td>$(Html-Encode $Report.System.Windows) $($Report.System.Version) Build $($Report.System.Build)</td></tr>
+<tr><td class='text-secondary'>CPU</td><td>$(Html-Encode $Report.System.CPU) / Cores $($Report.System.CPUCores) / Hilos $($Report.System.CPUThreads)</td></tr>
+<tr><td class='text-secondary'>RAM</td><td>$($Report.System.RAMTotalGB) GB</td></tr>
+</tbody>
+</table></div></div></div>
+"@)
+
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Sensores temperatura finales</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Sensor</th><th>Tipo</th><th>Temperatura C</th><th>Fuente</th></tr></thead><tbody>")
     foreach ($t in $Report.TemperaturesFinal) {
         $null = $sb.Append("<tr><td>$(Html-Encode $t.Sensor)</td><td>$(Html-Encode $t.Tipo)</td><td>$($t.TemperaturaC)</td><td>$(Html-Encode $t.Fuente)</td></tr>")
     }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
 
-    $null = $sb.Append("<div class='card'><h2>Discos y volumenes</h2><table><tr><th>Unidad</th><th>Nombre</th><th>FS</th><th>Tamano GB</th><th>Libre GB</th><th>Libre %</th><th>Usado %</th></tr>")
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Discos y volumenes</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Unidad</th><th>Nombre</th><th>FS</th><th>Tamano GB</th><th>Libre GB</th><th>Libre %</th><th>Usado %</th></tr></thead><tbody>")
     foreach ($v in $Report.Disks.Volumes) {
         $null = $sb.Append("<tr><td>$($v.Unidad)</td><td>$(Html-Encode $v.Nombre)</td><td>$($v.Sistema)</td><td>$($v.TamanoGB)</td><td>$($v.LibreGB)</td><td>$($v.LibrePct)</td><td>$($v.UsadoPct)</td></tr>")
     }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
 
     $null = $sb.Append(@"
-<div class='card'><h2>Disco avanzado</h2>
-<p><strong>Temperatura maxima disco:</strong> $($Report.DiskAdvanced.MaxDiskTemperatureC) C</p>
+<div class='card border-0 shadow-sm mb-4'><div class='card-body'>
+<h5 class='card-title fw-semibold'>Disco avanzado</h5>
+<p class='mb-3'><span class='badge bg-info text-dark fs-6'>Temp max disco: $($Report.DiskAdvanced.MaxDiskTemperatureC) C</span></p>
 
 "@)
 
-    $null = $sb.Append("<h3>Storage Reliability</h3><table><tr><th>Device</th><th>Temp C</th><th>Temp Max C</th><th>Wear</th><th>PowerOnHours</th><th>ReadErr</th><th>WriteErr</th><th>ReadLatencyMax</th><th>WriteLatencyMax</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>Storage Reliability</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Device</th><th>Temp C</th><th>Temp Max C</th><th>Wear</th><th>PowerOnHours</th><th>ReadErr</th><th>WriteErr</th><th>ReadLatencyMax</th><th>WriteLatencyMax</th></tr></thead><tbody>")
     foreach ($r in $Report.DiskAdvanced.StorageReliability) {
         $null = $sb.Append("<tr><td>$($r.DeviceId)</td><td>$($r.TemperatureC)</td><td>$($r.TemperatureMaxC)</td><td>$($r.Wear)</td><td>$($r.PowerOnHours)</td><td>$($r.ReadErrorsTotal)</td><td>$($r.WriteErrorsTotal)</td><td>$($r.ReadLatencyMax)</td><td>$($r.WriteLatencyMax)</td></tr>")
     }
-    $null = $sb.Append("</table>")
+    $null = $sb.Append("</tbody></table></div>")
 
-    $null = $sb.Append("<h3>SMART WMI</h3><table><tr><th>Instance</th><th>PredictFailure</th><th>Reason</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>SMART WMI</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Instance</th><th>PredictFailure</th><th>Reason</th></tr></thead><tbody>")
     foreach ($w in $Report.DiskAdvanced.WmiSmart) {
         $null = $sb.Append("<tr><td>$(Html-Encode $w.InstanceName)</td><td>$($w.PredictFailure)</td><td>$($w.Reason)</td></tr>")
     }
-    $null = $sb.Append("</table>")
+    $null = $sb.Append("</tbody></table></div>")
 
-    $null = $sb.Append("<h3>TRIM</h3><table><tr><th>FileSystem</th><th>TrimEnabled</th><th>Raw</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>TRIM</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>FileSystem</th><th>TrimEnabled</th><th>Raw</th></tr></thead><tbody>")
     foreach ($t in $Report.DiskAdvanced.Trim) {
         $null = $sb.Append("<tr><td>$($t.FileSystem)</td><td>$($t.TrimEnabled)</td><td>$(Html-Encode $t.Raw)</td></tr>")
     }
-    $null = $sb.Append("</table>")
+    $null = $sb.Append("</tbody></table></div>")
 
-    $null = $sb.Append("<h3>Fragmentacion / Optimizacion</h3><table><tr><th>Drive</th><th>FS</th><th>Media</th><th>Health</th><th>Frag %</th><th>NeedsDefrag</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>Fragmentacion / Optimizacion</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Drive</th><th>FS</th><th>Media</th><th>Health</th><th>Frag %</th><th>NeedsDefrag</th></tr></thead><tbody>")
     foreach ($f in $Report.DiskAdvanced.Fragmentation) {
         $null = $sb.Append("<tr><td>$($f.Drive)</td><td>$($f.FileSystem)</td><td>$($f.MediaType)</td><td>$($f.HealthStatus)</td><td>$($f.FragmentationPercent)</td><td>$($f.NeedsDefrag)</td></tr>")
     }
-    $null = $sb.Append("</table>")
+    $null = $sb.Append("</tbody></table></div>")
 
-    $null = $sb.Append("<h3>CHKDSK scan</h3><table><tr><th>Drive</th><th>Status</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>CHKDSK scan</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Drive</th><th>Status</th></tr></thead><tbody>")
     foreach ($c in $Report.DiskAdvanced.Chkdsk) {
         $null = $sb.Append("<tr><td>$($c.Drive)</td><td>$($c.Status)</td></tr>")
     }
-    $null = $sb.Append("</table>")
+    $null = $sb.Append("</tbody></table></div>")
 
-    $null = $sb.Append("<h3>BitLocker</h3><table><tr><th>MountPoint</th><th>Status</th><th>Protection</th><th>Method</th><th>%</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>BitLocker</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>MountPoint</th><th>Status</th><th>Protection</th><th>Method</th><th>%</th></tr></thead><tbody>")
     foreach ($b in $Report.DiskAdvanced.BitLocker) {
         $null = $sb.Append("<tr><td>$($b.MountPoint)</td><td>$($b.VolumeStatus)</td><td>$($b.ProtectionStatus)</td><td>$($b.EncryptionMethod)</td><td>$($b.EncryptionPercentage)</td></tr>")
     }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
 
-    $null = $sb.Append("<div class='card'><h2>Hallazgos</h2><table><tr><th>Severidad</th><th>Area</th><th>Penalidad</th><th>Mensaje</th></tr>")
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Hallazgos</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Severidad</th><th>Area</th><th>Penalidad</th><th>Mensaje</th></tr></thead><tbody>")
     foreach ($h in $Report.Score.Hallazgos) {
         $null = $sb.Append("<tr><td class='finding-$($h.Severidad)'>$($h.Severidad)</td><td>$($h.Area)</td><td>-$($h.Penalidad)</td><td>$(Html-Encode $h.Mensaje)</td></tr>")
     }
     if ($Report.Score.Hallazgos.Count -eq 0) { $null = $sb.Append("<tr><td colspan='4'>Sin hallazgos negativos relevantes.</td></tr>") }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
 
-    $null = $sb.Append("<div class='card'><h2>Recomendaciones</h2><ul>")
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Recomendaciones</h5><ul class='list-bullet mb-0'>")
     foreach ($r in $Report.Recommendations) { $null = $sb.Append("<li>$(Html-Encode $r)</li>") }
-    $null = $sb.Append("</ul></div>")
+    $null = $sb.Append("</ul></div></div>")
 
-    $null = $sb.Append("<div class='card'><h2>Top procesos por CPU</h2><table><tr><th>Proceso</th><th>PID</th><th>CPU s</th><th>RAM MB</th><th>Ruta</th></tr>")
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Top procesos por CPU</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Proceso</th><th>PID</th><th>CPU s</th><th>RAM MB</th><th>Ruta</th></tr></thead><tbody>")
     foreach ($p in $Report.Processes.TopCPU) {
         $null = $sb.Append("<tr><td>$(Html-Encode $p.Name)</td><td>$($p.Id)</td><td>$($p.CPUSeconds)</td><td>$($p.RAMMB)</td><td>$(Html-Encode $p.Path)</td></tr>")
     }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
 
-    $null = $sb.Append("<div class='card'><h2>Eventos relevantes detectados</h2>")
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Eventos relevantes detectados</h5>")
     $null = $sb.Append("<p>Total eventos relevantes: <strong>$($Report.Events.TotalEventos)</strong> en los ultimos $($Report.Events.DiasAnalizados) dias.</p>")
-    $null = $sb.Append("<h3>Resumen por origen y nivel</h3><table><tr><th>Provider / Nivel</th><th>Cantidad</th></tr>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>Resumen por origen y nivel</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Provider / Nivel</th><th>Cantidad</th></tr></thead><tbody>")
     try {
         $groups = @($Report.Events.Eventos | Group-Object Provider,Nivel | Sort-Object Count -Descending)
         foreach ($g in $groups) {
             $null = $sb.Append("<tr><td>$(Html-Encode $g.Name)</td><td>$($g.Count)</td></tr>")
         }
     } catch { Write-Debug "Error agrupando eventos: $($_.Exception.Message)" }
-    $null = $sb.Append("</table>")
-    $null = $sb.Append("<h3>Detalle ultimos eventos</h3><table><tr><th>Fecha</th><th>Nivel</th><th>Provider</th><th>ID</th><th>Mensaje</th></tr>")
+    $null = $sb.Append("</tbody></table></div>")
+    $null = $sb.Append("<h5 class='text-secondary mt-3'>Detalle ultimos eventos</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Fecha</th><th>Nivel</th><th>Provider</th><th>ID</th><th>Mensaje</th></tr></thead><tbody>")
     foreach ($e in ($Report.Events.Eventos | Select-Object -First 80)) {
         $null = $sb.Append("<tr><td>$($e.Fecha)</td><td>$($e.Nivel)</td><td>$(Html-Encode $e.Provider)</td><td>$($e.Id)</td><td>$(Html-Encode $e.Mensaje)</td></tr>")
     }
     if ($Report.Events.Eventos.Count -eq 0) {
         $null = $sb.Append("<tr><td colspan='5'>Sin eventos relevantes detectados.</td></tr>")
     }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
 
-    $null = $sb.Append("<div class='card'><h2>Muestras de temperatura y carga</h2><table><tr><th>Fase</th><th>Fecha</th><th>CPU %</th><th>RAM %</th><th>Temp Max C</th><th>Disk Time %</th></tr>")
+    $null = $sb.Append("<div class='card border-0 shadow-sm mb-4'><div class='card-body'><h5 class='card-title fw-semibold'>Muestras de temperatura y carga</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Fase</th><th>Fecha</th><th>CPU %</th><th>RAM %</th><th>Temp Max C</th><th>Disk Time %</th></tr></thead><tbody>")
     $allSamples = @()
     $allSamples += $Report.Reposo.Samples
     $allSamples += $Report.Benchmark.Phase.Samples
     foreach ($s in $allSamples) {
         $null = $sb.Append("<tr><td>$($s.Fase)</td><td>$($s.Fecha)</td><td>$($s.CPUPercent)</td><td>$($s.RAMUsedPercent)</td><td>$($s.TempMaxC)</td><td>$($s.DiskTimePercent)</td></tr>")
     }
-    $null = $sb.Append("</table></div>")
+    $null = $sb.Append("</tbody></table></div></div></div>")
+
+    $null = $sb.Append("</div>")
+
+    $null = $sb.Append("<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js'></script>")
+    $null = $sb.Append("<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>")
+    $null = $sb.Append("<script>")
+    $null = $sb.Append("const samplePoints = $timelineJson;")
+    $null = $sb.Append(@"
+if (Array.isArray(samplePoints) && samplePoints.length > 0) {
+  const labels = samplePoints.map(p => p.Label);
+  const datasets = [
+    { label: 'CPU %', data: samplePoints.map(p => p.CPU), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.15)', fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: samplePoints.map(p => p.Phase === 'Reposo' ? '#22d3ee' : '#fb923c') },
+    { label: 'RAM %', data: samplePoints.map(p => p.RAM), borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.15)', fill: true, tension: .3, pointRadius: 3 },
+    { label: 'Temp C', data: samplePoints.map(p => p.Temp), borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.15)', fill: true, tension: .3, pointRadius: 3, yAxisID: 'tempAxis' }
+  ];
+  new Chart(document.getElementById('timelineChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Utilizacion %' }, grid: { color: 'rgba(148,163,184,.1)' } },
+        tempAxis: { position: 'right', beginAtZero: false, grid: { drawOnChartArea: false }, title: { display: true, text: 'Temperatura C' } }
+      },
+      plugins: {
+        legend: { labels: { color: '#e2e8f0', usePointStyle: true } }
+      }
+    }
+  });
+}
+"@)
+    $null = $sb.Append("<footer class='text-center py-3' style='color:#64748b;font-size:.8rem'>Generado por Reporte de Rendimiento V3.6</footer>")
     $null = $sb.Append("</div></body></html>")
     return $sb.ToString()
 }
@@ -2410,6 +2945,12 @@ $system = Get-SystemInfo
 $reposo = Measure-Phase -Phase "Reposo" -Seconds $DuracionReposoSeg -Interval $IntervaloMuestreoSeg -AdvancedTemp $advancedTemp -LhmDll $LibreHardwareMonitorPath
 $benchmark = Invoke-SeriousBenchmark -Folder $runFolder -Duration $DuracionPruebaSeg -Interval $IntervaloMuestreoSeg -AdvancedTemp $advancedTemp -LhmDll $LibreHardwareMonitorPath -MaxWorkers $MaxCpuWorkers -DiskFileMB $DiskTestFileMB
 
+Write-Info "Ejecutando benchmark de memoria"
+$ramBenchmark = Invoke-RamBenchmark -DurationSeconds 12 -ChunkMB 32
+
+Write-Info "Ejecutando prueba de red"
+$networkTest = Invoke-NetworkTest
+
 Write-Info "Tomando muestra termica final"
 $tempsFinal = @(Get-TemperatureInfo -Advanced $advancedTemp -DllPath $LibreHardwareMonitorPath)
 
@@ -2435,8 +2976,8 @@ $services = Get-ServicesInfo
 $events = Get-CriticalEvents -Days 7
 $security = Get-SecurityInfo
 
-$score = Get-Score -Reposo $reposo -Benchmark $benchmark -Disks $disks -DiskAdvanced $diskAdvanced -TempsFinal $tempsFinal -Smart $smart -Startup $startup -Events $events -Security $security
-$recommendations = Get-Recommendations -Reposo $reposo -Benchmark $benchmark -Disks $disks -Smart $smart -Startup $startup -Events $events
+$score = Get-Score -Reposo $reposo -Benchmark $benchmark -Disks $disks -DiskAdvanced $diskAdvanced -TempsFinal $tempsFinal -Smart $smart -Startup $startup -Events $events -Security $security -RamBenchmark $ramBenchmark -Network $networkTest
+$recommendations = Get-Recommendations -Reposo $reposo -Benchmark $benchmark -Disks $disks -Smart $smart -Startup $startup -Events $events -RamBenchmark $ramBenchmark -Network $networkTest
 
 $metadata = [PSCustomObject]@{
     Modo = $Modo
@@ -2471,6 +3012,8 @@ $report = [PSCustomObject]@{
     Services = $services
     Events = $events
     Security = $security
+    RamBenchmark = $ramBenchmark
+    Network = $networkTest
     Score = $score
     Recommendations = $recommendations
 }

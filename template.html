@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang='es' data-bs-theme='dark'>
+<head>
+<meta charset='UTF-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>Reporte Rendimiento - {{HOSTNAME}}</title>
+<link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css' rel='stylesheet'>
+<style>
+body{background:#0f172a}
+.gradient-header{background:linear-gradient(120deg,#0ea5e9,#6366f1)}
+.card{background:#1e293b;border-color:rgba(148,163,184,.15)}
+.card-glass{background:rgba(30,41,59,.6);backdrop-filter:blur(6px)}
+.metric{font-size:2rem;font-weight:700;line-height:1.1}
+.label{color:#94a3b8;font-size:.8rem}
+.good{color:#a3e635}.ok{color:#34d399}.warn{color:#fbbf24}.bad{color:#f87171}
+.finding-Critico{color:#f87171;font-weight:700}
+.finding-Alto{color:#fbbf24;font-weight:700}
+.finding-Media{color:#94a3b8}
+.finding-Medio{color:#94a3b8}
+.list-bullet{list-style:none;padding-left:0}
+.list-bullet li::before{content:"\2022";color:#0ea5e9;font-weight:700;display:inline-block;width:1em;margin-left:-1em}
+canvas{max-height:280px}
+footer{color:#64748b;font-size:.8rem}
+</style>
+</head>
+<body>
+<div class='container py-4'>
+
+<div class='gradient-header text-white rounded-4 p-4 mb-4 shadow-lg'>
+<h1 class='mb-1 fw-bold'>Reporte de Rendimiento</h1>
+<p class='mb-0'>Modo: <strong>{{MODO}}</strong> | Cliente: <strong>{{CLIENTE}}</strong> | OT: <strong>{{OT}}</strong></p>
+<p class='mb-0 mt-1'>Tecnico: {{TECNICO}} | Fecha: {{FECHA}}</p>
+</div>
+
+<div class='row g-3 mb-4'>
+<div class='col-md-3'>
+<div class='card h-100 border-0 shadow-sm'>
+<div class='card-body text-center'>
+<div class='label'>Score general</div>
+<p class='metric {{SCORE_CLASS}} mb-0'>{{SCORE}}/100</p>
+<span class='badge bg-secondary mt-2'>{{ESTADO}}</span>
+</div></div></div>
+<div class='col-md-3'>
+<div class='card h-100 border-0 shadow-sm'>
+<div class='card-body text-center'>
+<div class='label'>Temp max reposo</div>
+<p class='metric good mb-0'>{{TEMP_REPOSO_MAX}}&deg;C</p>
+<div class='label mt-1'>Prom: {{TEMP_REPOSO_AVG}} &deg;C</div>
+</div></div></div>
+<div class='col-md-3'>
+<div class='card h-100 border-0 shadow-sm'>
+<div class='card-body text-center'>
+<div class='label'>Temp max carga</div>
+<p class='metric warn mb-0'>{{TEMP_CARGA_MAX}}&deg;C</p>
+<div class='label mt-1'>Prom: {{TEMP_CARGA_AVG}} &deg;C</div>
+</div></div></div>
+<div class='col-md-3'>
+<div class='card h-100 border-0 shadow-sm'>
+<div class='card-body text-center'>
+<div class='label'>Duracion total</div>
+<p class='metric mb-0'>{{DURACION_TOTAL}}s</p>
+<div class='label mt-1'>Reposo + carga</div>
+</div></div></div>
+</div>
+
+{{PHASE_CARDS}}
+
+{{BENCHMARK_CARD}}
+
+<div class='card card-glass border-0 shadow-sm mb-4'>
+<div class='card-body'>
+<h5 class='card-title fw-semibold'>Linea de carga y temperatura</h5>
+<canvas id='timelineChart'></canvas>
+</div></div>
+
+{{NETWORK_CARD}}
+
+<div class='card border-0 shadow-sm mb-4'>
+<div class='card-body'>
+<h5 class='card-title fw-semibold'>Ficha del equipo</h5>
+<div class='table-responsive'>
+<table class='table table-dark table-borderless mb-0 align-middle'>
+<tbody>
+<tr><td class='text-secondary' style='width:140px'>Hostname</td><td>{{HOSTNAME}}</td></tr>
+<tr><td class='text-secondary'>Usuario</td><td>{{USUARIO}}</td></tr>
+<tr><td class='text-secondary'>Administrador</td><td>{{ADMIN}}</td></tr>
+<tr><td class='text-secondary'>Fabricante / Modelo</td><td>{{FABRICANTE}} {{MODELO}}</td></tr>
+<tr><td class='text-secondary'>Serial</td><td>{{SERIAL}}</td></tr>
+<tr><td class='text-secondary'>Windows</td><td>{{WINDOWS}} {{VERSION}} Build {{BUILD}}</td></tr>
+<tr><td class='text-secondary'>CPU</td><td>{{CPU}} / Cores {{CPU_CORES}} / Hilos {{CPU_THREADS}}</td></tr>
+<tr><td class='text-secondary'>RAM</td><td>{{RAM_GB}} GB</td></tr>
+</tbody>
+</table></div></div></div>
+
+{{TEMPERATURE_CARD}}
+
+{{VOLUMES_CARD}}
+
+{{DISK_ADVANCED_CARD}}
+
+{{FINDINGS_CARD}}
+
+<div class='card border-0 shadow-sm mb-4'>
+<div class='card-body'>
+<h5 class='card-title fw-semibold'>Recomendaciones</h5>
+<ul class='list-bullet mb-0'>{{RECOMMENDATIONS}}</ul>
+</div></div>
+
+{{PROCESSES_CARD}}
+
+{{EVENTS_CARD}}
+
+{{SAMPLES_CARD}}
+
+<footer class='text-center py-3'>Generado por Reporte de Rendimiento V3.6</footer>
+</div>
+
+<script src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js'></script>
+<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>
+<script>
+const samplePoints = {{TIMELINE_JSON}};
+if (Array.isArray(samplePoints) && samplePoints.length > 0) {
+  const labels = samplePoints.map(p => p.Label);
+  const datasets = [
+    { label: 'CPU %', data: samplePoints.map(p => p.CPU), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.15)', fill: true, tension: .3, pointRadius: 3, pointBackgroundColor: samplePoints.map(p => p.Phase === 'Reposo' ? '#22d3ee' : '#fb923c') },
+    { label: 'RAM %', data: samplePoints.map(p => p.RAM), borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.15)', fill: true, tension: .3, pointRadius: 3 },
+    { label: 'Temp C', data: samplePoints.map(p => p.Temp), borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.15)', fill: true, tension: .3, pointRadius: 3, yAxisID: 'tempAxis' }
+  ];
+  new Chart(document.getElementById('timelineChart'), {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: 'Utilizacion %' }, grid: { color: 'rgba(148,163,184,.1)' } },
+        tempAxis: { position: 'right', beginAtZero: false, grid: { drawOnChartArea: false }, title: { display: true, text: 'Temperatura C' } }
+      },
+      plugins: {
+        legend: { labels: { color: '#e2e8f0', usePointStyle: true } }
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>
