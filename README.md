@@ -30,3 +30,9 @@ Herramienta PowerShell para generar diagnósticos integrales de equipos Windows:
 - Corre en PowerShell elevado para obtener datos de sensores/SMART más completos.
 - Ejecuta `-InstalarLibreHardwareMonitor` si la DLL no está disponible.
 - Revisa `reporte.html` con cualquier navegador moderno para aprovechar las gráficas.
+
+
+
+
+
+.\Reporte-Rendimiento-V3.6-Temperatura-Eventos.ps1 -Modo Antes -Cliente "ClienteX" -OrdenTrabajo "OT-001" -Tecnico "Juan" -DuracionReposoSeg 30 -DuracionPruebaSeg 60
