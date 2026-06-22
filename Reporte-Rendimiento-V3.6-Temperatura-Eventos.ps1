@@ -37,7 +37,7 @@ function Write-Log {
     param([string]$Message)
     if ($script:LogPath) {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        try { Add-Content -Path $script:LogPath -Value "$timestamp $Message" -ErrorAction SilentlyContinue } catch {}
+        try { Add-Content -Path $script:LogPath -Value "$timestamp $Message" -ErrorAction SilentlyContinue } catch { Write-Warning "Error: $_" }
     }
 }
 
@@ -105,7 +105,7 @@ function Get-DefaultWritableBase {
             Remove-Item $testFile -Force -ErrorAction SilentlyContinue
 
             return $base
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     return (Join-Path $env:TEMP "ReporteRendimiento")
@@ -136,13 +136,13 @@ function Initialize-DefaultPaths {
         if (!(Test-Path $resolvedRuta)) {
             New-Item -ItemType Directory -Path $resolvedRuta -Force | Out-Null
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         if (!(Test-Path $toolsDir)) {
             New-Item -ItemType Directory -Path $toolsDir -Force | Out-Null
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return [PSCustomObject]@{
         BaseDir = $base
@@ -275,10 +275,10 @@ function Get-SystemInfo {
 function Add-LhmTemperatureSensors {
     param($Hardware, [ref]$Results)
 
-    try { $Hardware.Update() } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Hardware.Update() } catch { Write-Warning "Error: $_" }
 
     foreach ($sub in $Hardware.SubHardware) {
-        try { $sub.Update() } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        try { $sub.Update() } catch { Write-Warning "Error: $_" }
     }
 
     foreach ($sensor in $Hardware.Sensors) {
@@ -291,7 +291,7 @@ function Add-LhmTemperatureSensors {
                     Fuente = "LibreHardwareMonitor_DLL"
                 }
             }
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     foreach ($sub in $Hardware.SubHardware) {
@@ -305,7 +305,7 @@ function Add-LhmTemperatureSensors {
                         Fuente = "LibreHardwareMonitor_DLL"
                     }
                 }
-            } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+            } catch { Write-Warning "Error: $_" }
         }
     }
 }
@@ -320,7 +320,7 @@ function Get-LhmLoaderExceptionText {
                 if ($le -ne $null) { $msgs += $le.Message }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         if ($Exception.InnerException -ne $null) {
@@ -330,7 +330,7 @@ function Get-LhmLoaderExceptionText {
                 }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     if ($msgs.Count -eq 0) { return $Exception.Message }
     return ($msgs -join " | ")
@@ -344,23 +344,23 @@ function Import-LhmDependencies {
         if ([string]::IsNullOrWhiteSpace($dir)) { return }
         if (!(Test-Path $dir)) { return }
 
-        try { Get-ChildItem -Path $dir -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        try { Get-ChildItem -Path $dir -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch { Write-Warning "Error: $_" }
 
         $dlls = @(Get-ChildItem -Path $dir -Filter "*.dll" -ErrorAction SilentlyContinue)
 
         # Cargar primero dependencias comunes y luego LibreHardwareMonitorLib.
         foreach ($d in $dlls) {
             if ($d.Name -ne "LibreHardwareMonitorLib.dll") {
-                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch { Write-Warning "Error: $_" }
             }
         }
 
         foreach ($d in $dlls) {
             if ($d.Name -eq "LibreHardwareMonitorLib.dll") {
-                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { [System.Reflection.Assembly]::LoadFrom($d.FullName) | Out-Null } catch { Write-Warning "Error: $_" }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 }
 
 function Get-TemperatureFromLhm {
@@ -398,7 +398,7 @@ function Get-TemperatureFromLhm {
 
         if ($computer -ne $null) { $computer.Close() }
     } catch {
-        try { if ($computer -ne $null) { $computer.Close() } } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        try { if ($computer -ne $null) { $computer.Close() } } catch { Write-Warning "Error: $_" }
         $loaderText = Get-LhmLoaderExceptionText -Exception $_.Exception
         $results += [PSCustomObject]@{
             Sensor = "LibreHardwareMonitor"
@@ -428,12 +428,12 @@ function Resolve-LhmDllPath {
             $candidates += (Join-Path $scriptDir "LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
             $candidates += (Join-Path $scriptDir "Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         $defaultBase = Get-DefaultWritableBase
         $candidates += (Join-Path $defaultBase "Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     if ($env:ProgramData) {
         $candidates += (Join-Path $env:ProgramData "ReporteRendimiento\Tools\LibreHardwareMonitor\LibreHardwareMonitorLib.dll")
@@ -487,7 +487,7 @@ function Install-LibreHardwareMonitor {
 
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
 
         $tmpRoot = Join-Path $env:TEMP ("LibreHardwareMonitor_" + [guid]::NewGuid().ToString())
         New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
@@ -532,7 +532,7 @@ function Install-LibreHardwareMonitor {
 
         try {
             Get-ChildItem -Path $TargetDir -Recurse -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
 
         $targetDll = Join-Path $TargetDir "LibreHardwareMonitorLib.dll"
         if (!(Test-Path $targetDll)) {
@@ -548,7 +548,7 @@ function Install-LibreHardwareMonitor {
         Write-Info "LibreHardwareMonitor instalado en: $TargetDir"
         Write-Info "DLL detectada: $targetDll"
 
-        try { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        try { Remove-Item $tmpRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { Write-Warning "Error: $_" }
         return $result
     } catch {
         $result.Error = $_.Exception.Message
@@ -573,7 +573,7 @@ function Ensure-LibreHardwareMonitor {
         try {
             $parent = Split-Path -Parent $RequestedDllPath
             if (![string]::IsNullOrWhiteSpace($parent)) { $targetDir = $parent }
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     $install = Install-LibreHardwareMonitor -TargetDir $targetDir
@@ -603,11 +603,11 @@ function Get-TemperatureFromHardwareMonitorWmi {
                 $identifier = $null
                 $parent = $null
 
-                try { $sensorType = [string]$sensor.SensorType } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-                try { $value = $sensor.Value } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-                try { $name = [string]$sensor.Name } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-                try { $identifier = [string]$sensor.Identifier } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-                try { $parent = [string]$sensor.Parent } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+                try { $sensorType = [string]$sensor.SensorType } catch { Write-Warning "Error: $_" }
+                try { $value = $sensor.Value } catch { Write-Warning "Error: $_" }
+                try { $name = [string]$sensor.Name } catch { Write-Warning "Error: $_" }
+                try { $identifier = [string]$sensor.Identifier } catch { Write-Warning "Error: $_" }
+                try { $parent = [string]$sensor.Parent } catch { Write-Warning "Error: $_" }
 
                 if (($sensorType -eq "Temperature") -and ($value -ne $null)) {
                     $sensorName = $name
@@ -622,7 +622,7 @@ function Get-TemperatureFromHardwareMonitorWmi {
                     }
                 }
             }
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     return $results
@@ -646,7 +646,7 @@ function Get-TemperatureFromWmi {
                 }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return $temps
 }
@@ -683,7 +683,7 @@ function Get-TemperatureFromNvidiaSmi {
                 }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return $results
 }
@@ -711,7 +711,7 @@ function Get-TemperatureFromThermalZoneCounters {
                 }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         $probes = @(Get-CimInstance Win32_TemperatureProbe -ErrorAction Stop)
@@ -728,7 +728,7 @@ function Get-TemperatureFromThermalZoneCounters {
                 }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return $results
 }
@@ -833,7 +833,7 @@ function Get-CurrentMetrics {
         try {
             $counter = Get-Counter '\Processor(_Total)\% Processor Time' -ErrorAction Stop
             $cpuValue = [math]::Round($counter.CounterSamples[0].CookedValue, 2)
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     try {
@@ -844,7 +844,7 @@ function Get-CurrentMetrics {
             $ramUsedPct = [math]::Round((($totalKB - $freeKB) / $totalKB) * 100, 2)
             $ramFreeGB = [math]::Round(($freeKB * 1KB) / 1GB, 2)
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         $disk = Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -eq "_Total" } | Select-Object -First 1
@@ -852,7 +852,7 @@ function Get-CurrentMetrics {
             $diskQueue = $disk.AvgDiskQueueLength
             $diskTime = $disk.PercentDiskTime
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     $temps = @(Get-TemperatureInfo -Advanced $AdvancedTemp -DllPath $LhmDll)
     $tempMax = Get-MaxTemperature -Temps $temps
@@ -1160,7 +1160,7 @@ function Invoke-Disk4KIOTest {
         $init.SetLength($fileSize)
         $init.Close()
     } catch {
-        Write-Debug "No se pudo preparar archivo 4K: $($_.Exception.Message)"
+        Write-Warning "Error: $_"
         return $null
     }
 
@@ -1184,7 +1184,7 @@ function Invoke-Disk4KIOTest {
             $readOps++
         }
     } catch {
-        Write-Debug "Error 4K IO: $($_.Exception.Message)"
+        Write-Warning "Error: $_"
     } finally {
         $fs.Close()
     }
@@ -1198,7 +1198,7 @@ function Invoke-Disk4KIOTest {
         $readIOPS = [math]::Round($readOps / $durationSec, 2)
     }
 
-    try { Remove-Item $filePath -Force -ErrorAction SilentlyContinue } catch {}
+    try { Remove-Item $filePath -Force -ErrorAction SilentlyContinue } catch { Write-Warning "Error: $_" }
 
     return [PSCustomObject]@{
         DurationSeconds = [math]::Round($durationSec, 2)
@@ -1247,14 +1247,14 @@ function Invoke-NetworkTest {
                 $min = ($latencies | Measure-Object -Minimum).Minimum
                 $successRate = [math]::Round((($latencies.Count / $PingCount) * 100), 2)
             }
-        } catch { }
+        } catch { Write-Warning "Error: $_" }
 
         $tcp = $null
         $tcpSuccess = $false
         try {
             $tcp = Test-NetConnection -ComputerName $target -Port 53 -WarningAction SilentlyContinue
             if ($tcp -ne $null) { $tcpSuccess = $tcp.TcpTestSucceeded }
-        } catch { }
+        } catch { Write-Warning "Error: $_" }
 
         $results += [PSCustomObject]@{
             Target = $target
@@ -1305,7 +1305,7 @@ function Invoke-SeriousBenchmark {
     try {
         $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
         if ($cpu.NumberOfLogicalProcessors -ne $null) { $threads = [int]$cpu.NumberOfLogicalProcessors }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     $workers = $MaxWorkers
     if ($workers -le 0) {
@@ -1342,12 +1342,12 @@ function Invoke-SeriousBenchmark {
                     if ($item.DurationMs -ne $null) { $maxDurationMs = [math]::Max($maxDurationMs, [double]$item.DurationMs) }
                 }
             }
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
         Remove-Job $j -Force -ErrorAction SilentlyContinue
     }
 
     $diskResult = $null
-    try { $diskResult = Receive-Job $diskJob -ErrorAction SilentlyContinue } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $diskResult = Receive-Job $diskJob -ErrorAction SilentlyContinue } catch { Write-Warning "Error: $_" }
     Remove-Job $diskJob -Force -ErrorAction SilentlyContinue
 
     $writeMB = 0
@@ -1429,7 +1429,7 @@ function Get-DiskInfo {
                 UsadoPct = $usedPct
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         $diskDrives = @(Get-CimInstance Win32_DiskDrive)
@@ -1448,7 +1448,7 @@ function Get-DiskInfo {
                 PhysicalMediaType = $null
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         $physicalDisks = @(Get-PhysicalDisk)
@@ -1470,7 +1470,7 @@ function Get-DiskInfo {
                 PhysicalMediaType = $p.MediaType
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         $perfDisks = @(Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk | Where-Object { $_.Name -ne "_Total" })
@@ -1490,7 +1490,7 @@ function Get-DiskInfo {
                 AvgDiskSecPerWrite_ms = $writeMs
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return [PSCustomObject]@{
         Volumes = $volumes
@@ -1508,8 +1508,8 @@ function Get-ProcessesInfo {
             $path = $null
             $startTime = $null
             $cpuSeconds = 0
-            try { $path = $p.Path } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-            try { $startTime = $p.StartTime } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+            try { $path = $p.Path } catch { Write-Warning "Error: $_" }
+            try { $startTime = $p.StartTime } catch { Write-Warning "Error: $_" }
             if ($p.CPU -ne $null) { $cpuSeconds = [math]::Round($p.CPU, 2) }
 
             $items += [PSCustomObject]@{
@@ -1521,7 +1521,7 @@ function Get-ProcessesInfo {
                 StartTime = $startTime
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return [PSCustomObject]@{
         TotalProcesos = $items.Count
@@ -1762,7 +1762,7 @@ function Get-DiskTemperatureFromSmartCtl {
                 }
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     return $items
 }
@@ -1786,7 +1786,7 @@ function Get-DefragAnalysis {
                 $part = Get-Partition -DriveLetter $v.DriveLetter -ErrorAction Stop | Select-Object -First 1
                 $disk = Get-Disk -Number $part.DiskNumber -ErrorAction Stop
                 $mediaType = $disk.MediaType
-            } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+            } catch { Write-Warning "Error: $_" }
 
             if ($Enabled -eq $true) {
                 try {
@@ -1983,7 +1983,7 @@ function Get-StartupPrograms {
                 Usuario = $s.User
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
     return $items
 }
 
@@ -1994,7 +1994,7 @@ function Get-ServicesInfo {
     try {
         foreach ($svc in Get-Service) {
             $startType = $null
-            try { $startType = $svc.StartType.ToString() } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+            try { $startType = $svc.StartType.ToString() } catch { Write-Warning "Error: $_" }
 
             $services += [PSCustomObject]@{
                 Nombre = $svc.Name
@@ -2003,7 +2003,7 @@ function Get-ServicesInfo {
                 TipoInicio = $startType
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     $running = @($services | Where-Object { $_.Estado -eq "Running" }).Count
     $autoRunning = @($services | Where-Object { ($_.TipoInicio -eq "Automatic") -and ($_.Estado -eq "Running") }).Count
@@ -2054,7 +2054,7 @@ function Get-CriticalEvents {
                     }
                 }
             }
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     $events = @($events | Sort-Object Fecha -Descending)
@@ -2082,7 +2082,7 @@ function Get-SecurityInfo {
             QuickScanAge = $d.QuickScanAge
             FullScanAge = $d.FullScanAge
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         foreach ($profile in Get-NetFirewallProfile) {
@@ -2091,7 +2091,7 @@ function Get-SecurityInfo {
                 Enabled = $profile.Enabled
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         foreach ($b in Get-BitLockerVolume -ErrorAction Stop) {
@@ -2102,7 +2102,7 @@ function Get-SecurityInfo {
                 EncryptionMethod = $b.EncryptionMethod
             }
         }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
 
     try {
         foreach ($a in Get-LocalGroupMember -Group "Administrators" -ErrorAction Stop) {
@@ -2119,7 +2119,7 @@ function Get-SecurityInfo {
                     Tipo = $a.ObjectClass
                 }
             }
-        } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+        } catch { Write-Warning "Error: $_" }
     }
 
     return [PSCustomObject]@{
@@ -2440,31 +2440,31 @@ function Get-Recommendations {
 function Export-Tables {
     param($Folder, $Report)
 
-    try { $Report.Reposo.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_reposo.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Benchmark.Phase.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_carga.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Processes.TopCPU | Export-Csv (Join-Path $Folder "procesos_top_cpu.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Processes.TopRAM | Export-Csv (Join-Path $Folder "procesos_top_ram.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Disks.Volumes | Export-Csv (Join-Path $Folder "volumenes.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Disks.PhysicalDisk | Export-Csv (Join-Path $Folder "discos_fisicos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Disks.DiskPerf | Export-Csv (Join-Path $Folder "disco_perf.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.StorageReliability | Export-Csv (Join-Path $Folder "disco_storage_reliability.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.WmiSmart | Export-Csv (Join-Path $Folder "disco_wmi_smart.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.Trim | Export-Csv (Join-Path $Folder "disco_trim.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.Fragmentation | Export-Csv (Join-Path $Folder "disco_fragmentacion.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.Chkdsk | Export-Csv (Join-Path $Folder "disco_chkdsk_scan.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.BitLocker | Export-Csv (Join-Path $Folder "disco_bitlocker.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.DiskAdvanced.SmartCtlDiskTemperature | Export-Csv (Join-Path $Folder "disco_temperatura_smartctl.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.TemperaturesFinal | Export-Csv (Join-Path $Folder "temperaturas_finales.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.SmartCtl | Select-Object Device,Available,Health,TemperatureC | Export-Csv (Join-Path $Folder "smartctl_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.StartupPrograms | Export-Csv (Join-Path $Folder "programas_inicio.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Events.Eventos | Export-Csv (Join-Path $Folder "eventos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Events.Eventos | Group-Object Provider,Nivel | ForEach-Object { [PSCustomObject]@{ Grupo = $_.Name; Cantidad = $_.Count } } | Export-Csv (Join-Path $Folder "eventos_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Services.ListaServicios | Export-Csv (Join-Path $Folder "servicios.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.RamBenchmark | Export-Csv (Join-Path $Folder "ram_benchmark.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    try { $Report.Reposo.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_reposo.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Benchmark.Phase.Samples | Select-Object Fase,Fecha,CPUPercent,RAMUsedPercent,RAMFreeGB,DiskQueue,DiskTimePercent,TempMaxC | Export-Csv (Join-Path $Folder "muestras_carga.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Processes.TopCPU | Export-Csv (Join-Path $Folder "procesos_top_cpu.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Processes.TopRAM | Export-Csv (Join-Path $Folder "procesos_top_ram.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Disks.Volumes | Export-Csv (Join-Path $Folder "volumenes.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Disks.PhysicalDisk | Export-Csv (Join-Path $Folder "discos_fisicos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Disks.DiskPerf | Export-Csv (Join-Path $Folder "disco_perf.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.StorageReliability | Export-Csv (Join-Path $Folder "disco_storage_reliability.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.WmiSmart | Export-Csv (Join-Path $Folder "disco_wmi_smart.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.Trim | Export-Csv (Join-Path $Folder "disco_trim.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.Fragmentation | Export-Csv (Join-Path $Folder "disco_fragmentacion.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.Chkdsk | Export-Csv (Join-Path $Folder "disco_chkdsk_scan.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.BitLocker | Export-Csv (Join-Path $Folder "disco_bitlocker.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.DiskAdvanced.SmartCtlDiskTemperature | Export-Csv (Join-Path $Folder "disco_temperatura_smartctl.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.TemperaturesFinal | Export-Csv (Join-Path $Folder "temperaturas_finales.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.SmartCtl | Select-Object Device,Available,Health,TemperatureC | Export-Csv (Join-Path $Folder "smartctl_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.StartupPrograms | Export-Csv (Join-Path $Folder "programas_inicio.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Events.Eventos | Export-Csv (Join-Path $Folder "eventos.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Events.Eventos | Group-Object Provider,Nivel | ForEach-Object { [PSCustomObject]@{ Grupo = $_.Name; Cantidad = $_.Count } } | Export-Csv (Join-Path $Folder "eventos_resumen.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.Services.ListaServicios | Export-Csv (Join-Path $Folder "servicios.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
+    try { $Report.RamBenchmark | Export-Csv (Join-Path $Folder "ram_benchmark.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
     try {
         if ($Report.Benchmark.Disk4K -ne $null) { @($Report.Benchmark.Disk4K) | Export-Csv (Join-Path $Folder "disco_4k.csv") -NoTypeInformation -Encoding UTF8 }
-    } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
-    try { $Report.Network | Export-Csv (Join-Path $Folder "network_test.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Debug "Empty catch: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
+    try { $Report.Network | Export-Csv (Join-Path $Folder "network_test.csv") -NoTypeInformation -Encoding UTF8 } catch { Write-Warning "Error: $_" }
 }
 
 function New-SummaryText {
@@ -2788,7 +2788,7 @@ canvas{max-height:280px}
         foreach ($g in $groups) {
             $null = $sb.Append("<tr><td>$(Html-Encode $g.Name)</td><td>$($g.Count)</td></tr>")
         }
-    } catch { Write-Debug "Error agrupando eventos: $($_.Exception.Message)" }
+    } catch { Write-Warning "Error: $_" }
     $null = $sb.Append("</tbody></table></div>")
     $null = $sb.Append("<h5 class='text-secondary mt-3'>Detalle ultimos eventos</h5><div class='table-responsive'><table class='table table-dark table-borderless align-middle mb-0'><thead><tr><th>Fecha</th><th>Nivel</th><th>Provider</th><th>ID</th><th>Mensaje</th></tr></thead><tbody>")
     foreach ($e in ($Report.Events.Eventos | Select-Object -First 80)) {
