@@ -33,49 +33,8 @@ $ErrorActionPreference = "Continue"
 
 $script:LogPath = $null
 
-function Write-Log {
-    param([string]$Message)
-    if ($script:LogPath) {
-        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        try { Add-Content -Path $script:LogPath -Value "$timestamp $Message" -ErrorAction SilentlyContinue } catch { Write-Warning "Error: $_" }
-    }
-}
-
-function Write-Info {
-    param([string]$Message)
-    Write-Host "[INFO] $Message" -ForegroundColor Cyan
-    Write-Log "[INFO] $Message"
-}
-
-function Write-Warn2 {
-    param([string]$Message)
-    Write-Host "[WARN] $Message" -ForegroundColor Yellow
-    Write-Log "[WARN] $Message"
-}
-
-function Safe-Name {
-    param([string]$Text)
-    if ([string]::IsNullOrWhiteSpace($Text)) { return "SinDato" }
-    $safe = $Text -replace '[\\/:*?"<>|]', '_'
-    $safe = $safe -replace '\s+', '_'
-    return $safe.Trim('_')
-}
-
-function Html-Encode {
-    param([object]$Value)
-    if ($null -eq $Value) { return "" }
-    return [System.Net.WebUtility]::HtmlEncode([string]$Value)
-}
-
-function Is-Admin {
-    try {
-        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
-        return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    } catch {
-        return $false
-    }
-}
+$modulePath = Join-Path $PSScriptRoot 'modules\Win1xUtilities.psm1'
+if (Test-Path $modulePath) { . $modulePath }
 
 
 function Get-DefaultWritableBase {
