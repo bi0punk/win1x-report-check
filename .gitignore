@@ -20,3 +20,15 @@ Thumbs.db
 .vscode/
 *.suo
 *.user
+
+# Entornos virtuales y cachés
+.venv/
+venv/
+env/
+node_modules/
+__pycache__/
+*.py[cod]
+*.log
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
