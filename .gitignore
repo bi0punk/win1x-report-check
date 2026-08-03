@@ -1,34 +1,7 @@
-# PowerShell
-*.dll
-*.exe
-*.msi
-*.zip
-*.7z
-*.log
-*.tmp
-
-# Report output
-Reportes-Rendimiento/
-Tools/
-
-# OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
-
-# IDE
-.idea/
-.vscode/
-*.suo
-*.user
-
-# Entornos virtuales y cachés
-.venv/
-venv/
-env/
-node_modules/
-__pycache__/
-*.py[cod]
 *.log
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
+*.db
+*.ps1xml
