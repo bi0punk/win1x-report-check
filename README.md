@@ -3,7 +3,7 @@
 Herramienta PowerShell para generar diagnósticos integrales de equipos Windows: consumo de CPU/RAM, temperatura, disco, red, eventos y seguridad. Incluye benchmark de carga con estrés de CPU, pruebas secuenciales + 4K en disco, evaluación de RAM y conectividad básica.
 
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/tu-usuario/win1x-report-check/actions/workflows/ci.yml/badge.svg)](https://github.com/tu-usuario/win1x-report-check/actions/workflows/ci.yml)
+[![CI](https://github.com/bi0punk/win1x-report-check/actions/workflows/ci.yml/badge.svg)](https://github.com/bi0punk/win1x-report-check/actions/workflows/ci.yml)
 
 ## Tabla de Contenidos
 
@@ -39,13 +39,15 @@ Herramienta PowerShell para generar diagnósticos integrales de equipos Windows:
 
 ```
 win1x-report-check/
-├── Reporte-Rendimiento-V3.6-Temperatura-Eventos.ps1  # Script principal
+├── Reporte-Rendimiento-V3.6-Temperatura-Eventos.ps1  # Script principal (orquestador)
 ├── template.html             # Plantilla HTML para reporte
-├── modules/                  # Módulos PowerShell
+├── modules/                  # Módulos PowerShell (Win1xUtilities.psm1)
 ├── tests/                    # Tests Pester
 ├── .github/workflows/ci.yml
 └── README.md
 ```
+
+Las funciones de scoring, normalización y recomendaciones están centralizadas en `modules/Win1xUtilities.psm1`. El script principal actúa como orquestador y delega la lógica de dominio al módulo.
 
 ## Requisitos
 
@@ -57,7 +59,7 @@ win1x-report-check/
 ## Instalación
 
 ```powershell
-git clone https://github.com/tu-usuario/win1x-report-check.git
+git clone https://github.com/bi0punk/win1x-report-check.git
 cd win1x-report-check
 ```
 
